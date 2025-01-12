@@ -1,0 +1,5 @@
+requests==2.31.0
+asyncio==3.4.3
+aiohttp==3.9.3
+aws_lambda_powertools==1.25.5
+websocket-client==1.6.1

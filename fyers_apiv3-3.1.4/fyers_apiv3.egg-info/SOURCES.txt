@@ -1,0 +1,16 @@
+LICENSE.txt
+README.md
+setup.py
+fyers_apiv3/__init__.py
+fyers_apiv3/fyersModel.py
+fyers_apiv3/fyers_logger.py
+fyers_apiv3.egg-info/PKG-INFO
+fyers_apiv3.egg-info/SOURCES.txt
+fyers_apiv3.egg-info/dependency_links.txt
+fyers_apiv3.egg-info/requires.txt
+fyers_apiv3.egg-info/top_level.txt
+fyers_apiv3/FyersWebsocket/__init__.py
+fyers_apiv3/FyersWebsocket/data_ws.py
+fyers_apiv3/FyersWebsocket/defines.py
+fyers_apiv3/FyersWebsocket/map.json
+fyers_apiv3/FyersWebsocket/order_ws.py

@@ -1,0 +1,127 @@
+//@version=5
+strategy("VWAP Strategy ", overlay=true, margin_long=100, margin_short=100, default_qty_type=strategy.percent_of_equity, default_qty_value=1)
+
+// === 1) Input Parameters ===
+anchor = input.string(defval="Session", title="Anchor Period",
+ options=["Session", "Week", "Month", "Quarter", "Year", "Decade", "Century", "Earnings", "Dividends", "Splits"])
+calcModeInput = input.string("Standard Deviation", "Bands Calculation Mode",
+ options=["Standard Deviation", "Percentage"])
+bandMult = input.float(1.0, title="Bands Multiplier", step=0.5, minval=0)
+hideonDWM = input(false, title="Hide VWAP on 1D or Above", group="VWAP Settings", display=display.data_window)
+
+// === 2) Indicators ===
+ema21 = ta.ema(close, 21)
+
+// === 3) VWAP Calculation ===
+new_earnings = request.earnings(syminfo.tickerid, earnings.actual,
+ barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_dividends = request.dividends(syminfo.tickerid, dividends.gross,
+ barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+new_split = request.splits(syminfo.tickerid, splits.denominator,
+ barmerge.gaps_on, barmerge.lookahead_on, ignore_invalid_symbol=true)
+
+isNewPeriod = switch anchor
+    "Earnings"  => not na(new_earnings)
+    "Dividends" => not na(new_dividends)
+    "Splits"    => not na(new_split)
+    "Session"   => timeframe.change("D")
+    "Week"      => timeframe.change("W")
+    "Month"     => timeframe.change("M")
+    "Quarter"   => timeframe.change("3M")
+    "Year"      => timeframe.change("12M")
+    "Decade"    => timeframe.change("12M") and year % 10 == 0
+    "Century"   => timeframe.change("12M") and year % 100 == 0
+    => false
+
+// If no previous bar (like on chart load) AND anchor is time-based, start fresh
+if na(close[1]) and not (anchor == "Earnings" or anchor == "Dividends" or anchor == "Splits")
+    isNewPeriod := true
+
+float vwapValue = na
+float upperBandValue = na
+float lowerBandValue = na
+
+if not (hideonDWM and timeframe.isdwm)
+    [_vwap, _stdevUpper, _] = ta.vwap(hlc3, isNewPeriod, 1)
+    vwapValue := _vwap
+    stdevAbs = _stdevUpper - vwapValue
+    bandBasis = calcModeInput == "Standard Deviation" ? stdevAbs : vwapValue * 0.01
+    upperBandValue := vwapValue + bandBasis * bandMult
+    lowerBandValue := vwapValue - bandBasis * bandMult
+
+// === 4) Entry Conditions ===
+thick_green_candle = close > open and (close - open) / (high - low) >= 0.4
+thick_red_candle   = open > close and (open - close) / (high - low) >= 0.4
+
+// Time Conditions (IST Timezone)
+startTime       = timestamp("Asia/Kolkata", year, month, dayofmonth, 9, 45)
+endTime         = timestamp("Asia/Kolkata", year, month, dayofmonth, 14, 00)
+inTradeTimeWindow  = time >= startTime and time <= endTime
+
+entryStartTime  = timestamp("Asia/Kolkata", year, month, dayofmonth, 9, 45)
+entryEndTime    = timestamp("Asia/Kolkata", year, month, dayofmonth, 13, 00)
+inEntryTimeWindow = time >= entryStartTime and time <= entryEndTime
+
+// Variables to track trades and outcomes
+var float entry_vwap = na
+var bool trade_allowed = true
+var bool first_trade_was_profit = false
+var bool first_trade_closed = false
+var int  trades_closed_today = 0
+
+// Reset variables at the start of a new day
+if ta.change(time("D"))
+    trade_allowed          := true
+    first_trade_was_profit := false
+    first_trade_closed     := false
+    entry_vwap             := na
+    trades_closed_today    := 0
+
+// === 5) Buy & Sell Signals ===
+buy_signal  = trade_allowed and inEntryTimeWindow and thick_green_candle and open > upperBandValue
+sell_signal = trade_allowed and inEntryTimeWindow and thick_red_candle   and open < lowerBandValue
+
+// === 6) Alerts ===
+// 6.1) Alert Conditions (makes them selectable in the "Condition" dropdown)
+alertcondition(buy_signal, title="VWAP Strategy - Buy Signal", message="Buy Signal: {{ticker}}")
+alertcondition(sell_signal, title="VWAP Strategy - Sell Signal", message="Sell Signal: {{ticker}}")
+
+// (Optional) You could also directly trigger an alert() call in code:
+// if buy_signal
+//     alert("VWAP Strategy - BUY triggered for " + syminfo.ticker, alert.freq_once_per_bar)
+//
+// if sell_signal
+//     alert("VWAP Strategy - SELL triggered for " + syminfo.ticker, alert.freq_once_per_bar)
+
+// === 7) Strategy Execution ===
+if buy_signal
+    strategy.entry("Long", strategy.long)
+    entry_vwap := vwapValue
+
+if sell_signal
+    strategy.entry("Short", strategy.short)
+    entry_vwap := vwapValue
+
+// === 8) Stop Loss and Take Profit ===
+if strategy.position_size > 0  // Long position
+    stop_loss    = entry_vwap * 0.9998
+    take_profit  = strategy.position_avg_price + 1 * (strategy.position_avg_price - stop_loss)
+    strategy.exit(id="Exit Long", from_entry="Long", stop=stop_loss, limit=take_profit)
+
+if strategy.position_size < 0  // Short position
+    stop_loss    = entry_vwap * 1.0002
+    take_profit  = strategy.position_avg_price - 1 * (stop_loss - strategy.position_avg_price)
+    strategy.exit(id="Exit Short", from_entry="Short", stop=stop_loss, limit=take_profit)
+
+// === 9) Exit all positions by 3:10 PM IST ===
+if time >= endTime and strategy.position_size != 0
+    strategy.close_all()
+
+// === 10) Monitor trade outcomes ===
+
+
+// Reset entry_vwap when position is closed
+if strategy.position_size == 0 and nz(strategy.position_size[1]) != 0
+    entry_vwap := na
+
+
