@@ -2,7 +2,7 @@
 
 import logging
 import asyncio
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, abort
 from fyers_integration import FyersIntegration
 from config_manager import ConfigManager
 
@@ -42,11 +42,26 @@ async def place_order(order_details):
     except Exception as e:
         logging.error(f"--------------Order placement error: {e}")
 
+
+
+@app.before_request
+def allow_specific_routes():
+    # Allow POST /webhook
+    if request.method == 'POST' and request.path == '/webhook':
+        return  # Proceed
+
+    # Allow GET /capture_auth_code
+    if request.method == 'GET' and '/capture_auth_code' in request.path:
+        return  # Proceed
+
+    # Block everything else
+    abort(403)
+
 def run_app(): 
     logging.basicConfig(level=logging.INFO)
     # Generate login URL if not authorized yet
     fyers_integration.generate_auth_url()
     app.run(host="0.0.0.0", port=80)
-
-if __name__ == "__main__":
+ 
+if __name__ == "__main__": 
     run_app()
