@@ -28,7 +28,15 @@ def webhook():
 
     if data["event"] == "place_order":
         order_details = data.get("order_details", {})
-        logging.info(f"--------------order details: {order_details}")
+        if order_details["side"] == "buy":
+            order_details["side"] = 1
+        if order_details["side"] == "sell":
+            order_details["side"] = -1
+        if order_details["symbol"] == "NSE:NIFTYBANK-INDEX":
+            order_details["side"] = 1
+
+
+        logging.info(f"--------[------order details: {order_details}")
         asyncio.run(place_order(order_details))
         return jsonify({"--------------status": "Order processing initiated."})
 

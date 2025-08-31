@@ -12,7 +12,7 @@ class AppConfig:
     access_token: str = None
 
 class ConfigManager:
-    CONFIG_FILE = "config.json"
+    CONFIG_FILE = "configandlogs\config.json"
 
     @staticmethod
     def load_config() -> AppConfig:
