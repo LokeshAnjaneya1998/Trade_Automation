@@ -1,0 +1,278 @@
+v//@version=6
+//───────────────────────────────────────────────────────────────────────────────
+//  NIFTY Futures – ORB (Break-Retest-Re-break)  |  5-minute chart
+//───────────────────────────────────────────────────────────────────────────────
+strategy("NIFTY ORB (Retest + Re-break) – 5m",
+         overlay            = true,
+         calc_on_every_tick = true,
+         default_qty_type   = strategy.fixed,
+         default_qty_value  = 75,
+         pyramiding         = 2)
+
+// ══════════════════ INPUTS ════════════════════════════════════════════════════
+stopBufferPts  = input.float(2.0,  "Stop-loss buffer (pts)", step = 0.25)
+// riskReward    = input.float(1.5, "Risk-Reward (TP = RR × SL)", minval = 0.1, step = 0.1)
+entryBufferPts = input.float(15.0, "Retest buffer into OR (pts)", step = 0.25)
+plotRange      = input.bool(true,  "Plot first-5-min range")
+retestExpiry   = input.int (6,     "Cancel sequence after n bars", minval = 1)
+
+// Congestion filter controls (KEEPING stuck-bars logic)
+proxPts        = input.float(4.0,  "Near-OR proximity (pts) to call it ‘stuck’", step = 0.25)
+stuckBars      = input.int  (3,    "Consecutive bars near OR to block entry", minval = 1, maxval = 6)
+
+var string TZ = "Asia/Kolkata"
+finalBar = barstate.isconfirmed  // bar-close gate
+
+// ══════════════════ SESSION TIMES ════════════════════════════════════════════
+startTime      = timestamp(TZ, year, month, dayofmonth, 9, 15)
+endTime        = timestamp(TZ, year, month, dayofmonth, 15, 00)
+entryStartTime = timestamp(TZ, year, month, dayofmonth, 9, 30)
+entryEndTime   = timestamp(TZ, year, month, dayofmonth, 12, 25)
+entryWindow    = time >= entryStartTime and time <= entryEndTime
+
+// ══════════════════ OPENING RANGE (09:15–09:20 / :25 / :30) ═════════════════
+newDay   = timeframe.change("D")
+
+var float orHigh   = na
+var float orLow    = na
+var float orHigh10 = na
+var float orLow10  = na
+var float orHigh15 = na
+var float orLow15  = na
+var float orOpen15 = na
+var float orClose15= na
+var bool  rangeLocked = false
+
+barH = hour(time, TZ)
+barM = minute(time, TZ)
+inORbuild   = (barH == 9 and barM >= 15 and barM < 20)
+inORbuild10 = (barH == 9 and barM >= 15 and barM < 25)
+inORbuild15 = (barH == 9 and barM >= 15 and barM < 30)
+
+if newDay
+    orHigh      := na
+    orLow       := na
+    orHigh10    := na
+    orLow10     := na
+    orHigh15    := na
+    orLow15     := na
+    orOpen15    := na
+    orClose15   := na
+    rangeLocked := false
+
+if inORbuild
+    orHigh := math.max(nz(orHigh, high), high)
+    orLow  := math.min(nz(orLow , low ),  low )
+else if not rangeLocked and not na(orHigh) and not na(orLow)
+    rangeLocked := true
+
+if inORbuild10
+    orHigh10 := math.max(nz(orHigh10, high), high)
+    orLow10  := math.min(nz(orLow10 , low ),  low )
+else if not rangeLocked and not na(orHigh) and not na(orLow)
+    rangeLocked := true
+
+if inORbuild15
+    orHigh15 := math.max(nz(orHigh15, high), high)
+    orLow15  := math.min(nz(orLow15 , low ),  low )
+else if not rangeLocked and not na(orHigh) and not na(orLow)
+    rangeLocked := true
+
+plot(plotRange and rangeLocked ? orHigh : na, "OR High", color=color.green, linewidth=2)
+plot(plotRange and rangeLocked ? orLow  : na, "OR Low",  color=color.red,   linewidth=2)
+
+// ══════════════════ FLAGS, HELPERS, FILTERS ══════════════════════════════════
+var int longState    = 0   // 0-idle | 1-breakout | 2-retest
+var int shortState   = 0
+var int longBaseBar  = na
+var int shortBaseBar = na
+
+// NEW: retest counters (bar-close counting) – max 2 allowed
+var int  longRetests     = 0
+var int  shortRetests    = 0
+var bool longRetouching  = false
+var bool shortRetouching = false
+
+thickGreen = close > open and (close - open) / math.max(high - low, 1e-6) >= 0.35
+thickRed   = open > close and (open - close) / math.max(high - low, 1e-6) >= 0.35
+
+inRangeFirst5      = orHigh10 > orHigh or orLow10 < orLow or orHigh15 > orHigh or orLow15 < orLow
+
+
+// Breakout (bar-close gated on purpose)
+defLongBreak  = rangeLocked and finalBar and open + 5 > orHigh and close > orHigh
+defShortBreak = rangeLocked and finalBar and open < orLow + 5  and close < orLow
+reLongBreak   = rangeLocked and open >= orHigh and close >= orHigh
+reShortBreak  = rangeLocked and open <= orLow  and close <= orLow
+
+// Volatility & stretch
+atrLen      = 14
+atrSeries   = ta.atr(atrLen)
+atrMedian   = ta.median(atrSeries, 60)
+volOK       = atrSeries > atrMedian
+
+orWidth  = orHigh - orLow
+atr14    = atrSeries
+stretch  = orWidth / atr14
+
+riskReward = stretch > 1.8 ? 1.0 : 3.0
+bigBox   = orWidth > 58
+boxHalf  = orWidth * 0.5  // (not used in this version’s SL)
+
+maxLossInr = input.int(9400, "Catastrophe-stop ₹ risk", minval = 1000, step = 500)
+lotQty     = 75
+maxLossPts = maxLossInr / lotQty
+
+volOKVol = volume > ta.sma(volume, 20) * 0.3
+
+var float longOneR        = na
+var float shortOneR       = na
+var float dynLongTrailSL  = na
+var float dynShortTrailSL = na
+
+// ══════════════════ DAILY RESET ══════════════════════════════════════════════
+if newDay
+    longState  := 0
+    shortState := 0
+    longRetests := 0
+    shortRetests := 0
+    longRetouching := false
+    shortRetouching := false
+
+// ══════════════════ STUCK-BARS CONGESTION FILTER (bugfix only) ═══════════════
+// Near-5m OR or Near-15m OR
+near5Hi   = not na(orHigh)   and math.abs(low  - orHigh)  <= proxPts
+near15Hi  = not na(orHigh15) and math.abs(low  - orHigh15)<= proxPts
+near5Lo   = not na(orLow)    and math.abs(high - orLow)   <= proxPts
+near15Lo  = not na(orLow15)  and math.abs(high - orLow15) <= proxPts
+
+// BUGFIX: separate resistance vs support (they were identical before)
+nearRes = (near5Hi or near15Hi) ? 1.0 : 0.0     // near OR highs only
+nearSup = (near5Lo or near15Lo) ? 1.0 : 0.0     // near OR lows only
+
+// “stuck” = every one of the last `stuckBars` bars was near the level
+stuckLong  = nz(ta.sma(nearRes, stuckBars) * stuckBars, 0) == stuckBars
+stuckShort = nz(ta.sma(nearSup, stuckBars) * stuckBars, 0) == stuckBars
+
+plotshape(stuckLong,  title="StuckLong",  style=shape.circle, color=color.orange, location=location.abovebar, size=size.tiny)
+plotshape(stuckShort,  title="StuckShort", style=shape.circle, color=color.aqua,   location=location.belowbar, size=size.tiny)
+
+
+
+// ══════════════════ RETEST COUNTING (bar-close only) ═════════════════════════
+if finalBar
+    // LONG: count a fresh touch into retest zone
+    if (longState == 1 or longState == 2)
+        longTouchNow = (low <= orHigh + entryBufferPts)
+        if longTouchNow and not longRetouching
+            longRetests    += 1
+            longRetouching := true
+        else if not longTouchNow
+            longRetouching := false
+    // SHORT: count a fresh touch into retest zone
+    if (shortState == 1 or shortState == 2)
+        shortTouchNow = (high >= orLow - entryBufferPts)
+        if shortTouchNow and not shortRetouching
+            shortRetests    += 1
+            shortRetouching := true
+        else if not shortTouchNow
+            shortRetouching := false
+
+// ══════════════════ MAIN LOGIC ═══════════════════════════════════════════════
+if rangeLocked and inRangeFirst5
+    // ───── LONG side ─────
+    if longState == 0 and defLongBreak and volOK
+        longState      := 1
+        longBaseBar    := bar_index
+        longRetests    := 0
+        longRetouching := false
+
+    else if longState == 1
+        // NEW: timeout also in state-1 (non-retesting breakouts expire)
+        if bar_index - longBaseBar > retestExpiry
+            longState := 0
+            longRetouching := false
+            longRetests := 0
+        if finalBar and low <= orHigh + entryBufferPts
+            longState := 2
+
+    else if longState == 2
+        if bar_index - longBaseBar > retestExpiry
+            longState := 0
+            longRetouching := false
+            longRetests := 0
+        // ENTER only if ≤ 2 retests AND not stuck under OR highs
+        if finalBar and reLongBreak and thickGreen and high[1] > high[2] and volOKVol and entryWindow and (longRetests <= 2) and not stuckLong
+            entry  = close
+            slBase = (orLow + stopBufferPts)  // your current SL rule
+            risk   = entry - slBase
+            tp     = entry + risk * riskReward
+
+            longOneR       := entry + risk
+            dynLongTrailSL := na
+            delayBars      = bar_index - longBaseBar
+
+            strategy.entry("Long", strategy.long, comment = "d=" + str.tostring(delayBars) + ",r=" + str.tostring(longRetests) + ",s=" + str.tostring(stretch))
+
+            // catastrophe stop (only if tighter than slBase)
+            catStopLong = entry - maxLossPts
+            if catStopLong > slBase
+                strategy.exit("L-Cap", from_entry="Long", stop=catStopLong, comment="R=-cap w=" + str.tostring(orWidth))
+
+            strategy.exit("L-Exit", from_entry="Long", stop=slBase, limit=tp, comment = "w=" + str.tostring(orWidth))
+
+            longState := 0
+            longRetouching := false
+            longRetests := 0
+
+    // ───── SHORT side ─────
+    if shortState == 0 and defShortBreak and volOK
+        shortState      := 1
+        shortBaseBar    := bar_index
+        shortRetests    := 0
+        shortRetouching := false
+
+    else if shortState == 1
+        // NEW: timeout also in state-1
+        if bar_index - shortBaseBar > retestExpiry
+            shortState := 0
+            shortRetouching := false
+            shortRetests := 0
+        if finalBar and high >= orLow - entryBufferPts
+            shortState := 2
+
+    else if shortState == 2
+        if bar_index - shortBaseBar > retestExpiry
+            shortState := 0
+            shortRetouching := false
+            shortRetests := 0
+        // ENTER only if ≤ 2 retests AND not stuck near OR lows
+        if finalBar and reShortBreak and thickRed and low[1] < low[2] and volOKVol and entryWindow and (shortRetests <= 2) and not stuckShort
+            entry  = close
+            slBase = (orHigh - stopBufferPts)
+            risk   = slBase - entry
+            tp     = entry - risk * riskReward
+
+            shortOneR       := entry - risk
+            dynShortTrailSL := na
+            delayBars       = bar_index - shortBaseBar
+
+            strategy.entry("Short", strategy.short, comment = "d=" + str.tostring(delayBars) + ",r=" + str.tostring(shortRetests) + ",s=" + str.tostring(stretch))
+
+            catStopShort = entry + maxLossPts
+            if catStopShort < slBase
+                strategy.exit("S-Cap", from_entry="Short", stop=catStopShort, comment="w=" + str.tostring(orWidth))
+
+            strategy.exit("S-Exit", from_entry="Short", stop=slBase, limit=tp, comment = "w=" + str.tostring(orWidth))
+
+            shortState := 0
+            shortRetouching := false
+            shortRetests := 0
+
+// ══════════════════ DAILY RESET & FORCED FLAT ═══════════════════════════════
+if newDay
+    longState  := 0
+    shortState := 0
+
+if barstate.isconfirmed and time >= endTime
+    strategy.close_all(comment = "w = " + str.tostring(orWidth))
