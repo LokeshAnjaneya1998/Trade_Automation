@@ -20,7 +20,7 @@ class FyersIntegration:
             grant_type="authorization_code",
         )
         auth_url = session.generate_authcode()
-        if os.getenv("FYERS_NO_BROWSER") == "1":
+        if os.getenv("FYERS_NO_BROWSER", "").lower() in {"1", "true", "yes", "on"}:
             logging.info(f"Headless mode: open this URL in a browser to authorize: {auth_url}")
         else:
             webbrowser.open(auth_url)
