@@ -11,7 +11,7 @@ app = Flask(__name__)
 fyers_integration = FyersIntegration()
 
 DEFAULT_HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0")
-DEFAULT_PORT = int(os.getenv("WEBHOOK_PORT", "80"))
+DEFAULT_PORT = int(os.getenv("WEBHOOK_PORT", "5000"))
 LOG_LEVEL = os.getenv("WEBHOOK_LOG_LEVEL", "INFO").upper()
 
 

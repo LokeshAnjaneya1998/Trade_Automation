@@ -1,6 +1,6 @@
 {
     "client_id": "EF1RRD52BU-100",
-    "redirect_uri": "http://127.0.0.1:80/capture_auth_code",
+    "redirect_uri": "http://127.0.0.1:5000/capture_auth_code",
     "secret_key": "DSPFOB3FKL",
     "auth_code": "",
     "access_token": "token"
