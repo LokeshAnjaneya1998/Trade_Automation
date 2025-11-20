@@ -25,6 +25,7 @@ class FyersIntegration:
         else:
             webbrowser.open(auth_url)
             logging.info(f"Authorization URL: {auth_url}")
+            print(os.getenv("FYERS_NO_BROWSER"))
 
     def fetch_access_token(self, auth_code: str):
         session = fyersModel.SessionModel(
