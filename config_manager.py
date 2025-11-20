@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
 @dataclass
 class AppConfig:
@@ -12,7 +13,8 @@ class AppConfig:
     access_token: str = None
 
 class ConfigManager:
-    CONFIG_FILE = "configandlogs\config.json"
+    # Resolve config path relative to this file so it works on Windows/Linux
+    CONFIG_FILE = Path(__file__).resolve().parent / "configandlogs" / "config.json"
 
     @staticmethod
     def load_config() -> AppConfig:
