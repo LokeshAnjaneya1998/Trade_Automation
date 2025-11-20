@@ -2,12 +2,24 @@
 
 import logging
 import asyncio
+import os
 from flask import Flask, request, jsonify, abort
 from fyers_integration import FyersIntegration
-from config_manager import ConfigManager
+from waitress import serve
 
 app = Flask(__name__)
 fyers_integration = FyersIntegration()
+
+DEFAULT_HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0")
+DEFAULT_PORT = int(os.getenv("WEBHOOK_PORT", "80"))
+LOG_LEVEL = os.getenv("WEBHOOK_LOG_LEVEL", "INFO").upper()
+
+
+def configure_logging():
+    logging.basicConfig(
+        level=LOG_LEVEL,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
 
 @app.route("/capture_auth_code", methods=["GET"])
 def capture_auth_code():
@@ -51,7 +63,6 @@ async def place_order(order_details):
         logging.error(f"--------------Order placement error: {e}")
 
 
-
 @app.before_request
 def allow_specific_routes():
     # Allow POST /webhook
@@ -65,11 +76,19 @@ def allow_specific_routes():
     # Block everything else
     abort(403)
 
-def run_app(): 
-    logging.basicConfig(level=logging.INFO)
-    # Generate login URL if not authorized yet
+def run_app():
+    # Development-oriented server (Flask built-in)
+    configure_logging()
     fyers_integration.generate_auth_url()
-    app.run(host="0.0.0.0", port=80)
- 
-if __name__ == "__main__": 
+    app.run(host=DEFAULT_HOST, port=DEFAULT_PORT)
+
+
+def run_production():
+    # Production-ready server via Waitress (cross-platform WSGI)
+    configure_logging()
+    fyers_integration.generate_auth_url()
+    serve(app, host=DEFAULT_HOST, port=DEFAULT_PORT)
+
+
+if __name__ == "__main__":
     run_app()
