@@ -69,18 +69,6 @@ async def place_order(order_details):
         logging.error(f"--------------Order placement error: {e}")
 
 
-@app.before_request
-def allow_specific_routes():
-    # Allow POST /webhook
-    if request.method == 'POST' and request.path == '/webhook':
-        return  # Proceed
-
-    # Allow GET /capture_auth_code
-    if request.method == 'GET' and '/capture_auth_code' in request.path:
-        return  # Proceed
-
-    # Block everything else
-    abort(403)
 
 def run_app():
     # Development-oriented server (Flask built-in)
