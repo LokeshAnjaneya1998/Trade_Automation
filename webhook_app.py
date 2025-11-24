@@ -8,6 +8,9 @@ from flask import Flask, request, jsonify, abort, render_template_string
 from fyers_integration import FyersIntegration
 from waitress import serve
 import re
+import time
+import threading
+
 
 app = Flask(__name__)
 fyers_integration = FyersIntegration()
@@ -86,6 +89,11 @@ def dashboard():
     <body>
         <h1>Fyers Bot Dashboard</h1>
 
+        <form method="POST" action="/restart" style="margin-bottom: 20px;">
+            <input type="hidden" name="token" value="{{ admin_token }}">
+            <button type="submit">🔄 Restart Bot</button>
+        </form>
+
         <div class="auth-box">
             <h2>Authentication Link</h2>
             {% if auth_url %}
@@ -103,7 +111,7 @@ def dashboard():
     </html>
     """
 
-    return render_template_string(html, auth_url=auth_url, log_html=log_html)
+    return render_template_string(html, auth_url=auth_url, log_html=log_html, admin_token=ADMIN_TOKEN)
 
 @app.route("/capture_auth_code", methods=["GET"])
 def capture_auth_code():
@@ -146,6 +154,21 @@ async def place_order(order_details):
     except Exception as e:
         logging.error(f"--------------Order placement error: {e}")
 
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
+
+@app.route("/restart", methods=["POST"])
+def restart_service():
+    token = request.form.get("token") or request.args.get("token")
+    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
+        abort(403)
+
+    # respond immediately, then exit in background so systemd restarts us
+    def delayed_exit():
+        time.sleep(1)
+        os._exit(0)
+
+    threading.Thread(target=delayed_exit, daemon=True).start()
+    return "Bot restarting...", 200
 
 
 def run_app():
