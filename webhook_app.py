@@ -4,12 +4,15 @@ import logging
 import asyncio
 import os
 from pathlib import Path
-from flask import Flask, request, jsonify, abort, render_template_string
+from flask import Flask, request, jsonify, abort, render_template_string, session, redirect, url_for
 from fyers_integration import FyersIntegration
 from waitress import serve
 import re
 import time
 import threading
+from functools import wraps
+
+
 
 
 TRADING_ENABLED = True  # global in-memory switch
@@ -21,6 +24,81 @@ def set_trading_enabled(value: bool):
 
 app = Flask(__name__)
 fyers_integration = FyersIntegration()
+
+
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "LokeshTrading")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "LoIn2047@912")
+
+SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
+app.secret_key = SECRET_KEY  # for session cookies
+
+
+def login_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not session.get("logged_in"):
+            # optional: remember where user wanted to go
+            next_url = request.path
+            return redirect(url_for("login", next=next_url))
+        return f(*args, **kwargs)
+    return wrapper
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = None
+    if request.method == "POST":
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
+
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            session["logged_in"] = True
+            # redirect to dashboard (or "next" if present)
+            next_url = request.args.get("next") or url_for("dashboard")
+            return redirect(next_url)
+        else:
+            error = "Invalid username or password"
+
+    html = """
+    <!doctype html>
+    <html>
+    <head>
+        <title>Login – Fyers Bot Dashboard</title>
+        <meta charset="utf-8" />
+        <style>
+            body { font-family: sans-serif; margin: 40px; }
+            form { max-width: 300px; }
+            label { display:block; margin-top:10px; }
+            input { width:100%; padding:6px; margin-top:4px; }
+            button { margin-top:15px; padding:8px 16px; }
+            .error { color: red; }
+        </style>
+    </head>
+    <body>
+        <h1>Login</h1>
+        {% if error %}
+            <p class="error">{{ error }}</p>
+        {% endif %}
+        <form method="POST">
+            <label>Username
+                <input type="text" name="username" autofocus />
+            </label>
+            <label>Password
+                <input type="password" name="password" />
+            </label>
+            <button type="submit">Login</button>
+        </form>
+    </body>
+    </html>
+    """
+    return render_template_string(html, error=error)
+
+
+@app.route("/logout")
+@login_required
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 
 @app.route("/", methods=["GET"])
 def index():
@@ -70,6 +148,7 @@ def get_latest_auth_url(log_text: str) -> str | None:
     return None
 
 @app.route("/dashboard", methods=["GET"])
+@login_required
 def dashboard():
     log_text = read_log_tail(200)
 
@@ -102,6 +181,10 @@ def dashboard():
             <input type="hidden" name="token" value="{{ admin_token }}">
             <button type="submit">🔄 Restart Bot</button>
         </form>
+
+        <p style="float:right;">
+            <a href="{{ url_for('logout') }}">Logout</a>
+        </p>
 
         <p>
             Trading status:
@@ -147,7 +230,7 @@ def dashboard():
             }
 
             // Refresh logs every 5 seconds (only the logs box)
-            setInterval(refreshLogs, 5000);
+            setInterval(refreshLogs, 1000);
         </script>
     </body>
     </html>
@@ -156,6 +239,7 @@ def dashboard():
     return render_template_string(html, auth_url=auth_url, log_html=log_html, admin_token=ADMIN_TOKEN, status_text=status_text, status_color=status_color)
 
 @app.route("/logs")
+@login_required
 def logs_only():
     log_text = read_log_tail(200)
     log_html = make_links(log_text)
@@ -209,6 +293,7 @@ async def place_order(order_details):
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 
 @app.route("/restart", methods=["GET","POST"])
+@login_required
 def restart_service():
     token = request.form.get("token") or request.args.get("token")
     if not ADMIN_TOKEN or token != ADMIN_TOKEN:
@@ -241,6 +326,7 @@ def restart_service():
 
 
 @app.route("/pause", methods=["POST"])
+@login_required
 def pause_trading():
     token = request.form.get("token") or request.args.get("token")
     if ADMIN_TOKEN and token != ADMIN_TOKEN:
@@ -266,6 +352,7 @@ def pause_trading():
         """, 200
 
 @app.route("/resume", methods=["POST"])
+@login_required
 def resume_trading():
     token = request.form.get("token") or request.args.get("token")
     if ADMIN_TOKEN and token != ADMIN_TOKEN:
