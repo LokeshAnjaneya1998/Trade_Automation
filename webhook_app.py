@@ -156,7 +156,7 @@ async def place_order(order_details):
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 
-@app.route("/restart", methods=["POST"])
+@app.route("/restart", methods=["GET","POST"])
 def restart_service():
     token = request.form.get("token") or request.args.get("token")
     if not ADMIN_TOKEN or token != ADMIN_TOKEN:
