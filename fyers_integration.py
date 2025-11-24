@@ -21,11 +21,11 @@ class FyersIntegration:
         )
         auth_url = session.generate_authcode()
         if os.getenv("FYERS_NO_BROWSER", "").lower() in {"1", "true", "yes", "on"}:
-            logging.info(f"Headless mode: open this URL in a browser to authorize: {auth_url}")
+            logging.info(f"Headless mode: open this URL in a browser to authorize:")
+            logging.info(f"Authorization URL: {auth_url}")
         else:
             webbrowser.open(auth_url)
             logging.info(f"Authorization URL: {auth_url}")
-            print(os.getenv("FYERS_NO_BROWSER"))
 
     def fetch_access_token(self, auth_code: str):
         session = fyersModel.SessionModel(
