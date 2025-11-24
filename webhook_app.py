@@ -7,6 +7,7 @@ from pathlib import Path
 from flask import Flask, request, jsonify, abort, render_template_string
 from fyers_integration import FyersIntegration
 from waitress import serve
+import re
 
 app = Flask(__name__)
 fyers_integration = FyersIntegration()
@@ -59,7 +60,16 @@ def get_latest_auth_url(log_text: str) -> str | None:
 @app.route("/dashboard", methods=["GET"])
 def dashboard():
     log_text = read_log_tail(200)
+
+    # Extract latest auth URL
     auth_url = get_latest_auth_url(log_text)
+
+    # Convert ANY URL in logs into clickable hyperlink
+    def make_links(text):
+        url_pattern = r'(https?://[^\s]+)'
+        return re.sub(url_pattern, r'<a href="\1" target="_blank">\1</a>', text)
+
+    log_html = make_links(log_text)
 
     html = """
     <!doctype html>
@@ -68,8 +78,9 @@ def dashboard():
         <title>Fyers Bot Dashboard</title>
         <style>
             body { font-family: sans-serif; margin: 20px; }
-            .auth-box { margin-bottom: 20px; padding: 10px; border: 1px solid #ccc; }
-            pre { background: #111; color: #eee; padding: 10px; overflow-x: auto; }
+            .auth-box { margin-bottom: 20px; padding: 12px; border: 1px solid #ccc; background: #fafafa; }
+            pre { background: #111; color: #eee; padding: 10px; overflow-x: auto; white-space: pre-wrap; }
+            a { color: #4EA5F3; }
         </style>
     </head>
     <body>
@@ -79,19 +90,20 @@ def dashboard():
             <h2>Authentication Link</h2>
             {% if auth_url %}
                 <p><a href="{{ auth_url }}" target="_blank">🔗 Click here to login to Fyers</a></p>
-                <p><small>Copy-paste this URL if link click doesn’t work:<br>{{ auth_url }}</small></p>
+                <p><small>{{ auth_url }}</small></p>
             {% else %}
                 <p>No Authorization URL found in recent logs.</p>
             {% endif %}
         </div>
 
         <h2>Recent Logs (last 200 lines)</h2>
-        <pre>{{ log_text }}</pre>
+        <pre>{{ log_html|safe }}</pre>
+
     </body>
     </html>
     """
 
-    return render_template_string(html, auth_url=auth_url, log_text=log_text)
+    return render_template_string(html, auth_url=auth_url, log_html=log_html)
 
 @app.route("/capture_auth_code", methods=["GET"])
 def capture_auth_code():
