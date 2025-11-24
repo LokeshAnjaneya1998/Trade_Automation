@@ -12,6 +12,13 @@ import time
 import threading
 
 
+TRADING_ENABLED = True  # global in-memory switch
+
+def set_trading_enabled(value: bool):
+    global TRADING_ENABLED
+    TRADING_ENABLED = value
+    logging.info(f"TRADING_ENABLED set to {TRADING_ENABLED}")
+
 app = Flask(__name__)
 fyers_integration = FyersIntegration()
 
@@ -75,6 +82,9 @@ def dashboard():
 
     log_html = make_links(log_text)
 
+    status_text = "ENABLED" if TRADING_ENABLED else "PAUSED"
+    status_color = "green" if TRADING_ENABLED else "red"
+
     html = """
     <!doctype html>
     <html>
@@ -95,12 +105,25 @@ def dashboard():
             <button type="submit">🔄 Restart Bot</button>
         </form>
 
-        <form method="POST" action="/stop" style="margin-bottom: 20px;">
+        <p>
+            Trading status:
+            <strong style="color: {{ status_color }};">{{ status_text }}</strong>
+        </p>
+
+        <form method="POST" action="/resume" style="display:inline-block;margin-right:10px;">
             <input type="hidden" name="token" value="{{ admin_token }}">
-            <button type="submit" style="background-color:red;color:white;padding:8px 16px;border:none;">
-                ⛔ Stop Bot
+            <button type="submit" style="background-color:green;color:white;padding:8px 16px;border:none;">
+                ▶ Start Trading
             </button>
         </form>
+
+        <form method="POST" action="/pause" style="display:inline-block;margin-right:10px;">
+            <input type="hidden" name="token" value="{{ admin_token }}">
+            <button type="submit" style="background-color:red;color:white;padding:8px 16px;border:none;">
+                ⏸ Stop Trading
+            </button>
+        </form>
+
 
 
         <div class="auth-box">
@@ -124,7 +147,7 @@ def dashboard():
     </html>
     """
 
-    return render_template_string(html, auth_url=auth_url, log_html=log_html, admin_token=ADMIN_TOKEN)
+    return render_template_string(html, auth_url=auth_url, log_html=log_html, admin_token=ADMIN_TOKEN, status_text=status_text, status_color=status_color)
 
 @app.route("/capture_auth_code", methods=["GET"])
 def capture_auth_code():
@@ -137,8 +160,12 @@ def capture_auth_code():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.get_json()
+    data = request.get_json(force=True, silent=True) or {}
+    logging.info(f"Incoming webhook: {data}")
     
+    if not TRADING_ENABLED:
+        logging.info("Webhook received but TRADING_ENABLED is False. Ignoring order.")
+        return jsonify({"status": "ignored", "reason": "trading_paused"}), 200
 
     if not data or "event" not in data:
         return jsonify({"--------------status": "Invalid webhook data"}), 400
@@ -199,36 +226,25 @@ def restart_service():
     </html>
     """, 200
 
-@app.route("/stop", methods=["GET", "POST"])
-def stop_bot():
-    token = request.form.get("token") or request.args.get("token")
 
+
+@app.route("/pause", methods=["POST"])
+def pause_trading():
+    token = request.form.get("token") or request.args.get("token")
     if ADMIN_TOKEN and token != ADMIN_TOKEN:
         abort(403)
 
-    STOP_FILE = Path(__file__).resolve().parent / "STOP"
-    STOP_FILE.write_text("stop")
+    set_trading_enabled(False)
+    return "Trading paused (no orders will be sent).", 200
 
-    # Exit process — systemd will NOT restart because STOP exists
-    def delayed_exit():
-        time.sleep(1)
-        os._exit(0)
+@app.route("/resume", methods=["POST"])
+def resume_trading():
+    token = request.form.get("token") or request.args.get("token")
+    if ADMIN_TOKEN and token != ADMIN_TOKEN:
+        abort(403)
 
-    threading.Thread(target=delayed_exit, daemon=True).start()
-
-    return """
-    <!doctype html>
-    <html>
-    <body>
-        <p>Bot stopped successfully.</p>
-        <script>
-            setTimeout(function() {
-                window.location.href = "/dashboard";
-            }, 2000);
-        </script>
-    </body>
-    </html>
-    """, 200
+    set_trading_enabled(True)
+    return "Trading resumed.", 200
 
 
 def run_app():
