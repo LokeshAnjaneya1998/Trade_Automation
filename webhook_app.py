@@ -3,7 +3,8 @@
 import logging
 import asyncio
 import os
-from flask import Flask, request, jsonify, abort
+from pathlib import Path
+from flask import Flask, request, jsonify, abort, render_template_string
 from fyers_integration import FyersIntegration
 from waitress import serve
 
@@ -20,12 +21,77 @@ LOG_LEVEL = os.getenv("WEBHOOK_LOG_LEVEL", "INFO").upper()
 
 
 
+LOG_LEVEL = "INFO"  # or whatever you use
 
 def configure_logging():
+    base_dir = Path(__file__).resolve().parent
+    log_dir = base_dir / "configandlogs"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "webhook.log"
+
     logging.basicConfig(
-        level=LOG_LEVEL,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        level=getattr(logging, LOG_LEVEL, logging.INFO),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(),          # goes to journalctl
+            logging.FileHandler(log_file)     # goes to configandlogs/webhook.log
+        ]
     )
+
+LOG_FILE = Path(__file__).resolve().parent / "configandlogs" / "webhook.log"
+
+def read_log_tail(max_lines: int = 200) -> str:
+    try:
+        with open(LOG_FILE, "r") as f:
+            lines = f.readlines()
+        tail = "".join(lines[-max_lines:])
+    except FileNotFoundError:
+        tail = "Log file not found. Trigger some activity first."
+    return tail
+
+def get_latest_auth_url(log_text: str) -> str | None:
+    for line in reversed(log_text.splitlines()):
+        if "Authorization URL:" in line:
+            # Expecting: "... Authorization URL: https://...."
+            return line.split("Authorization URL:")[-1].strip()
+    return None
+
+@app.route("/dashboard", methods=["GET"])
+def dashboard():
+    log_text = read_log_tail(200)
+    auth_url = get_latest_auth_url(log_text)
+
+    html = """
+    <!doctype html>
+    <html>
+    <head>
+        <title>Fyers Bot Dashboard</title>
+        <style>
+            body { font-family: sans-serif; margin: 20px; }
+            .auth-box { margin-bottom: 20px; padding: 10px; border: 1px solid #ccc; }
+            pre { background: #111; color: #eee; padding: 10px; overflow-x: auto; }
+        </style>
+    </head>
+    <body>
+        <h1>Fyers Bot Dashboard</h1>
+
+        <div class="auth-box">
+            <h2>Authentication Link</h2>
+            {% if auth_url %}
+                <p><a href="{{ auth_url }}" target="_blank">🔗 Click here to login to Fyers</a></p>
+                <p><small>Copy-paste this URL if link click doesn’t work:<br>{{ auth_url }}</small></p>
+            {% else %}
+                <p>No Authorization URL found in recent logs.</p>
+            {% endif %}
+        </div>
+
+        <h2>Recent Logs (last 200 lines)</h2>
+        <pre>{{ log_text }}</pre>
+    </body>
+    </html>
+    """
+
+    return render_template_string(html, auth_url=auth_url, log_text=log_text)
 
 @app.route("/capture_auth_code", methods=["GET"])
 def capture_auth_code():
