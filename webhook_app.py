@@ -48,10 +48,11 @@ def read_log_tail(max_lines: int = 200) -> str:
     try:
         with open(LOG_FILE, "r") as f:
             lines = f.readlines()
-        tail = "".join(lines[-max_lines:])
+        tail = lines[-max_lines:]
+        tail.reverse()  # newest first
+        return "".join(tail)
     except FileNotFoundError:
-        tail = "Log file not found. Trigger some activity first."
-    return tail
+        return "Log file not found. Trigger some activity first."
 
 def get_latest_auth_url(log_text: str) -> str | None:
     for line in reversed(log_text.splitlines()):
@@ -94,6 +95,14 @@ def dashboard():
             <button type="submit">🔄 Restart Bot</button>
         </form>
 
+        <form method="POST" action="/stop" style="margin-bottom: 20px;">
+            <input type="hidden" name="token" value="{{ admin_token }}">
+            <button type="submit" style="background-color:red;color:white;padding:8px 16px;border:none;">
+                ⛔ Stop Bot
+            </button>
+        </form>
+
+
         <div class="auth-box">
             <h2>Authentication Link</h2>
             {% if auth_url %}
@@ -106,7 +115,11 @@ def dashboard():
 
         <h2>Recent Logs (last 200 lines)</h2>
         <pre>{{ log_html|safe }}</pre>
-
+        <script>
+            setInterval(function() {
+                window.location.reload();
+            }, 5000);
+        </script>
     </body>
     </html>
     """
@@ -168,7 +181,54 @@ def restart_service():
         os._exit(0)
 
     threading.Thread(target=delayed_exit, daemon=True).start()
-    return "Bot restarting...", 200
+    return """
+    <!doctype html>
+    <html>
+      <head>
+        <title>Restarting bot...</title>
+        <meta charset="utf-8" />
+      </head>
+      <body>
+        <p>Bot is restarting... you will be redirected to the dashboard in a few seconds.</p>
+        <script>
+          setTimeout(function() {
+            window.location.href = "/dashboard";
+          }, 3000);  // 3 seconds
+        </script>
+      </body>
+    </html>
+    """, 200
+
+@app.route("/stop", methods=["GET", "POST"])
+def stop_bot():
+    token = request.form.get("token") or request.args.get("token")
+
+    if ADMIN_TOKEN and token != ADMIN_TOKEN:
+        abort(403)
+
+    STOP_FILE = Path(__file__).resolve().parent / "STOP"
+    STOP_FILE.write_text("stop")
+
+    # Exit process — systemd will NOT restart because STOP exists
+    def delayed_exit():
+        time.sleep(1)
+        os._exit(0)
+
+    threading.Thread(target=delayed_exit, daemon=True).start()
+
+    return """
+    <!doctype html>
+    <html>
+    <body>
+        <p>Bot stopped successfully.</p>
+        <script>
+            setTimeout(function() {
+                window.location.href = "/dashboard";
+            }, 2000);
+        </script>
+    </body>
+    </html>
+    """, 200
 
 
 def run_app():
