@@ -31,9 +31,6 @@ DEFAULT_PORT = int(os.getenv("WEBHOOK_PORT", "5000"))
 LOG_LEVEL = os.getenv("WEBHOOK_LOG_LEVEL", "INFO").upper()
 
 
-
-LOG_LEVEL = "INFO"  # or whatever you use
-
 def configure_logging():
     base_dir = Path(__file__).resolve().parent
     log_dir = base_dir / "configandlogs"
@@ -60,6 +57,10 @@ def read_log_tail(max_lines: int = 200) -> str:
         return "".join(tail)
     except FileNotFoundError:
         return "Log file not found. Trigger some activity first."
+    
+def make_links(text):
+        url_pattern = r'(https?://[^\s]+)'
+        return re.sub(url_pattern, r'<a href="\1" target="_blank">\1</a>', text)
 
 def get_latest_auth_url(log_text: str) -> str | None:
     for line in reversed(log_text.splitlines()):
@@ -75,10 +76,7 @@ def dashboard():
     # Extract latest auth URL
     auth_url = get_latest_auth_url(log_text)
 
-    # Convert ANY URL in logs into clickable hyperlink
-    def make_links(text):
-        url_pattern = r'(https?://[^\s]+)'
-        return re.sub(url_pattern, r'<a href="\1" target="_blank">\1</a>', text)
+    
 
     log_html = make_links(log_text)
 
@@ -137,17 +135,31 @@ def dashboard():
         </div>
 
         <h2>Recent Logs (last 200 lines)</h2>
-        <pre>{{ log_html|safe }}</pre>
+        <pre id="log-box">{{ log_html|safe }}</pre>
         <script>
-            setInterval(function() {
-                window.location.reload();
-            }, 5000);
+            function refreshLogs() {
+                fetch('/logs')
+                    .then(response => response.text())
+                    .then(html => {
+                        document.getElementById('log-box').innerHTML = html;
+                    })
+                    .catch(err => console.error("Log refresh failed:", err));
+            }
+
+            // Refresh logs every 5 seconds (only the logs box)
+            setInterval(refreshLogs, 5000);
         </script>
     </body>
     </html>
     """
 
     return render_template_string(html, auth_url=auth_url, log_html=log_html, admin_token=ADMIN_TOKEN, status_text=status_text, status_color=status_color)
+
+@app.route("/logs")
+def logs_only():
+    log_text = read_log_tail(200)
+    log_html = make_links(log_text)
+    return log_html, 200
 
 @app.route("/capture_auth_code", methods=["GET"])
 def capture_auth_code():
@@ -235,7 +247,23 @@ def pause_trading():
         abort(403)
 
     set_trading_enabled(False)
-    return "Trading paused (no orders will be sent).", 200
+    return """
+        <!doctype html>
+        <html>
+        <head>
+            <title>Restarting bot...</title>
+            <meta charset="utf-8" />
+        </head>
+        <body>
+            <p>Trading paused (no orders will be sent).... you will be redirected to the dashboard in a few seconds.</p>
+            <script>
+            setTimeout(function() {
+                window.location.href = "/dashboard";
+            }, 3000);  // 3 seconds
+            </script>
+        </body>
+        </html>
+        """, 200
 
 @app.route("/resume", methods=["POST"])
 def resume_trading():
@@ -244,7 +272,23 @@ def resume_trading():
         abort(403)
 
     set_trading_enabled(True)
-    return "Trading resumed.", 200
+    return """
+            <!doctype html>
+            <html>
+            <head>
+                <title>Restarting bot...</title>
+                <meta charset="utf-8" />
+            </head>
+            <body>
+                <p>Trading resumed.... you will be redirected to the dashboard in a few seconds.</p>
+                <script>
+                setTimeout(function() {
+                    window.location.href = "/dashboard";
+                }, 3000);  // 3 seconds
+                </script>
+            </body>
+            </html>
+            """, 200
 
 
 def run_app():
