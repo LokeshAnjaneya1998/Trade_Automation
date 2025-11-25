@@ -6,6 +6,8 @@ import logging
 from fyers_apiv3 import fyersModel
 from src.config_manager import AppConfig, ConfigManager
 
+logger = logging.getLogger(__name__)
+
 class FyersIntegration:
     def __init__(self):
         self.config: AppConfig = ConfigManager.load_config()
@@ -38,16 +40,24 @@ class FyersIntegration:
         )
         session.set_token(auth_code)
         response = session.generate_token()
-        logging.info(f"Access Token Response: {response}")
+        logging.info(f"Access Token Response: Access token generated")
         if "access_token" in response:
             self.config.access_token = response["access_token"]
             ConfigManager.save_config(self.config)
+            logging.info("Fyers authentication successful – ready for trading.")
+            try:
+                fy = self.get_fyers_instance()
+                profile = fy.get_profile()
+                logging.info(f"Fyers connection verified. Profile response: {profile}")
+            except Exception as e:
+                logging.error(f"Fyers connection verification failed: {e}")
         else:
             logging.error("Error fetching access token.")
 
     def get_fyers_instance(self):
         if not self.config.access_token:
             raise ValueError("Access token is missing. Authenticate first.")
+        logging.debug("Creating FyersModel instance with stored access token.")
         return fyersModel.FyersModel(
             token=self.config.access_token,
             is_async=False,

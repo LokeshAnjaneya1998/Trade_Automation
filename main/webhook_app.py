@@ -6,6 +6,7 @@ import threading
 import re
 from pathlib import Path
 from functools import wraps
+from logging.handlers import RotatingFileHandler
 
 from flask import (
     Flask,
@@ -23,6 +24,8 @@ from waitress import serve
 # ──────────────────────────────────────────────────────────────
 # Global trading state
 # ──────────────────────────────────────────────────────────────
+
+logger = logging.getLogger(__name__)
 
 TRADING_ENABLED = True  # in-memory switch
 
@@ -84,13 +87,18 @@ def configure_logging():
     log_dir.mkdir(exist_ok=True)
     log_file = log_dir / "webhook.log"
 
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=5 * 1024 * 1024,  # 5 MB per file
+        backupCount=5              # keep 5 old files
+    )
+
+    stream_handler = logging.StreamHandler()
+
     logging.basicConfig(
         level=getattr(logging, LOG_LEVEL, logging.INFO),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=[
-            logging.StreamHandler(),          # journalctl
-            logging.FileHandler(log_file),    # configandlogs/webhook.log
-        ],
+        handlers=[stream_handler, file_handler],
     )
 
 
@@ -238,6 +246,7 @@ def webhook():
 
 async def place_order(order_details):
     try:
+        logging.info(f"Placing order via Fyers: {order_details}")
         fyers = fyers_integration.get_fyers_instance()
         response = fyers.place_order(order_details)
         logging.info(f"Order response: {response}")
@@ -317,6 +326,7 @@ def run_app():
 
 def run_production():
     configure_logging()
+    logging.getLogger("waitress").setLevel(logging.ERROR)
     fyers_integration.generate_auth_url()
     serve(app, host=DEFAULT_HOST, port=DEFAULT_PORT)
 
