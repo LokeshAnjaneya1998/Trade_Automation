@@ -20,6 +20,7 @@ from flask import (
 )
 from src.fyers_integration import FyersIntegration
 from waitress import serve
+from datetime import timedelta
 
 # ──────────────────────────────────────────────────────────────
 # Global trading state
@@ -45,6 +46,13 @@ TEMPLATES_DIR = BASE_DIR / "templates"
 
 app = Flask(__name__, template_folder=str(TEMPLATES_DIR))
 fyers_integration = FyersIntegration()
+
+app.config.update(
+    SESSION_COOKIE_SECURE=True,      # only over HTTPS
+    SESSION_COOKIE_HTTPONLY=True,    # JS cannot read cookies
+    SESSION_COOKIE_SAMESITE="Lax",   # mitigates CSRF; "Strict" if you want maximum lock
+    PERMANENT_SESSION_LIFETIME=timedelta(minutes=10),
+)
 
 LOG_FILE = BASE_DIR / "configandlogs" / "webhook.log"
 
@@ -74,6 +82,18 @@ def login_required(f):
         if not session.get("logged_in"):
             next_url = request.path
             return redirect(url_for("login", next=next_url))
+
+        now = time.time()
+        last_seen = session.get("last_seen")
+
+        # If we've been inactive for > 10 minutes, force logout
+        if last_seen is not None and now - last_seen > 10 * 60:
+            session.clear()
+            return redirect(url_for("login"))
+
+        # Update last_seen on each valid request
+        session["last_seen"] = now
+
         return f(*args, **kwargs)
     return wrapper
 
@@ -139,9 +159,13 @@ def login():
         password = request.form.get("password", "")
 
         if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            session.clear()
             session["logged_in"] = True
+            session.permanent = True  # uses PERMANENT_SESSION_LIFETIME
+            session["last_seen"] = time.time()
             next_url = request.args.get("next") or url_for("dashboard")
             return redirect(next_url)
+
         else:
             error = "Invalid username or password"
 
