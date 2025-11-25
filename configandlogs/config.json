@@ -1,7 +1,7 @@
 {
-    "client_id": "M9Z22SGE0U-100",
+    "client_id": "",
     "redirect_uri": "https://autotradingindialokesh.trade/capture_auth_code",
-    "secret_key": "USPG2KOLTI",
+    "secret_key": "",
     "auth_code": "",
     "access_token": "token"
 }
