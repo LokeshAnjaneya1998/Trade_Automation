@@ -4,7 +4,7 @@ import os
 import webbrowser
 import logging
 from fyers_apiv3 import fyersModel
-from config_manager import AppConfig, ConfigManager
+from src.config_manager import AppConfig, ConfigManager
 
 class FyersIntegration:
     def __init__(self):

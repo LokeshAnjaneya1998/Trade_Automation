@@ -14,7 +14,7 @@ class AppConfig:
 
 class ConfigManager:
     # Resolve config path relative to this file so it works on Windows/Linux
-    CONFIG_FILE = Path(__file__).resolve().parent / "configandlogs" / "config.json"
+    CONFIG_FILE = Path(__file__).resolve().parents[1] / "configandlogs" / "config.json"
 
     @staticmethod
     def load_config() -> AppConfig:

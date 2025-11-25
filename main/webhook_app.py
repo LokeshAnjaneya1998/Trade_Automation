@@ -17,7 +17,7 @@ from flask import (
     redirect,
     url_for,
 )
-from fyers_integration import FyersIntegration
+from src.fyers_integration import FyersIntegration
 from waitress import serve
 
 # ──────────────────────────────────────────────────────────────
@@ -37,8 +37,13 @@ def set_trading_enabled(value: bool):
 # Flask app + Fyers integration
 # ──────────────────────────────────────────────────────────────
 
-app = Flask(__name__)
+BASE_DIR = Path(__file__).resolve().parents[1]  # project root
+TEMPLATES_DIR = BASE_DIR / "templates"
+
+app = Flask(__name__, template_folder=str(TEMPLATES_DIR))
 fyers_integration = FyersIntegration()
+
+LOG_FILE = BASE_DIR / "configandlogs" / "webhook.log"
 
 # Admin credentials + secret key from environment (override defaults in systemd)
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "LokeshTrading")
@@ -52,8 +57,8 @@ DEFAULT_HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0")
 DEFAULT_PORT = int(os.getenv("WEBHOOK_PORT", "5000"))
 LOG_LEVEL = os.getenv("WEBHOOK_LOG_LEVEL", "INFO").upper()
 
-BASE_DIR = Path(__file__).resolve().parent
-LOG_FILE = BASE_DIR / "configandlogs" / "webhook.log"
+
+
 
 
 # ──────────────────────────────────────────────────────────────
