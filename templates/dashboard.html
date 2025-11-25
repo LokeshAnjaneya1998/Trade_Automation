@@ -434,7 +434,7 @@
 </div>
 
 <script>
-    // Log auto-refresh (only log box, not whole page)
+
     function refreshLogs() {
         fetch("{{ url_for('logs_only') }}")
             .then(response => response.text())
@@ -446,7 +446,6 @@
 
     setInterval(refreshLogs, 5000);
 
-    // Confirmation modal for actions
     const backdrop = document.getElementById('confirm-backdrop');
     const msgEl = document.getElementById('confirm-message');
     const titleEl = document.getElementById('confirm-title');
@@ -497,7 +496,21 @@
             openConfirm(form, message, title);
         });
     });
+
+    window.addEventListener('beforeunload', function () {
+        try {
+            var url = "{{ url_for('logout_silent') }}";
+            var data = new Blob([], { type: 'application/x-www-form-urlencoded' });
+            navigator.sendBeacon(url, data);
+        } catch (e) {
+            // Fallback (rarely needed)
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", "{{ url_for('logout_silent') }}", false);
+            xhr.send(null);
+        }
+    });
 </script>
+
 
 </body>
 </html>

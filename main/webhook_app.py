@@ -178,10 +178,17 @@ def logout():
     session.clear()
     return redirect(url_for("login"))
 
+@app.route("/logout_silent", methods=["POST"])
+def logout_silent():
+    # No redirect, just clear the session and return 204
+    session.clear()
+    return "", 204
+
 
 @app.route("/", methods=["GET"])
 def index():
     return "Fyers webhook server is running", 200
+    
 
 
 # ──────────────────────────────────────────────────────────────
