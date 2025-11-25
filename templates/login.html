@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head>
+    <title>Login – Fyers Bot Dashboard</title>
+    <meta charset="utf-8" />
+    <style>
+        body { font-family: sans-serif; margin: 40px; }
+        form { max-width: 300px; }
+        label { display:block; margin-top:10px; }
+        input { width:100%; padding:6px; margin-top:4px; }
+        button { margin-top:15px; padding:8px 16px; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Login</h1>
+    {% if error %}
+        <p class="error">{{ error }}</p>
+    {% endif %}
+    <form method="POST">
+        <label>Username
+            <input type="text" name="username" autofocus />
+        </label>
+        <label>Password
+            <input type="password" name="password" />
+        </label>
+        <button type="submit">Login</button>
+    </form>
+</body>
+</html>

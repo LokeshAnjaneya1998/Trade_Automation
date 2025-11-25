@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head>
+    <title>{{ title }}</title>
+    <meta charset="utf-8" />
+</head>
+<body>
+    <p>{{ message }}</p>
+
+    <script>
+        // Safe injection of Jinja variable into JS
+        var delay = {{ delay_ms|default(3000)|int }};
+
+        setTimeout(function () {
+            window.location.href = "{{ redirect_url }}";
+        }, delay);
+    </script>
+
+</body>
+</html>
