@@ -393,11 +393,17 @@
             <p>Use this link to authenticate with Fyers and generate a fresh access token whenever required.</p>
 
             {% if auth_url %}
-                <p>
-                    <a href="{{ auth_url }}" target="_blank">🔗 Open Fyers authentication link</a>
-                </p>
+                <button
+                    type="button"
+                    class="btn btn-blue"
+                    onclick="window.open('{{ auth_url }}', '_blank');">
+                    <span class="icon">🔗</span>
+                    <span>Open Fyers authentication link</span>
+                </button>
+
                 <p class="auth-link"><small>{{ auth_url }}</small></p>
             {% else %}
+
                 <p class="auth-empty">
                     No Authorization URL found in recent logs yet. Restart the bot or check configuration.
                 </p>

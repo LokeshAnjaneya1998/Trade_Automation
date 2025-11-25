@@ -203,7 +203,27 @@ def capture_auth_code():
         return "Authorization code not found.", 400
 
     fyers_integration.fetch_access_token(auth_code)
-    return "Access token generated. You can close this tab."
+
+    return """
+    <!doctype html>
+    <html>
+    <head>
+        <meta charset="utf-8" />
+        <title>Fyers Auth Complete</title>
+    </head>
+    <body style="font-family: system-ui, sans-serif; text-align:center; padding-top:40px; background:#0b1120; color:#e5e7eb;">
+        <h2>Access token generated.</h2>
+        <p>You can close this tab.</p>
+        <p>This window will close automatically in a few seconds...</p>
+        <script>
+            setTimeout(function() {
+                window.close();
+            }, 3000);
+        </script>
+    </body>
+    </html>
+    """
+
 
 
 @app.route("/webhook", methods=["POST"])
