@@ -1,0 +1,1 @@
+2025-11-30 18:10:19,558 [INFO] src.fyers_integration: Authorization URL: https://api-t1.fyers.in/api/v3/generate-authcode?client_id=EF1RRD52BU-100&redirect_uri=https%3A%2F%2Fautotradingindialokesh.trade%2Fcapture_auth_code&response_type=code&state=sample

@@ -1,3 +1,6 @@
 flask
 fyers_apiv3
 waitress
+pandas
+pytz
+

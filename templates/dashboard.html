@@ -147,6 +147,51 @@
             margin-bottom: 10px;
         }
 
+                .checkpoint-item, .suggestion-item {
+            padding: 8px 10px;
+            border-radius: 6px;
+            border: 1px solid rgba(148, 163, 184, 0.3);
+            background: rgba(15, 23, 42, 0.8);
+            font-size: 0.85rem;
+        }
+
+        .checkpoint-title {
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+
+        .checkpoint-badge {
+            display: inline-block;
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 999px;
+            margin-left: 6px;
+        }
+
+        .checkpoint-badge.PASS {
+            background: rgba(34, 197, 94, 0.15);
+            color: #22c55e;
+            border: 1px solid rgba(34, 197, 94, 0.5);
+        }
+
+        .checkpoint-badge.WARN {
+            background: rgba(234, 179, 8, 0.15);
+            color: #eab308;
+            border: 1px solid rgba(234, 179, 8, 0.5);
+        }
+
+        .checkpoint-badge.FAIL {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.5);
+        }
+
+        .checkpoint-badge.INFO {
+            background: rgba(59, 130, 246, 0.15);
+            color: #3b82f6;
+            border: 1px solid rgba(59, 130, 246, 0.5);
+        }
+
         /* Control buttons */
 
         .controls {
@@ -385,6 +430,22 @@
                     </button>
                 </form>
             </div>
+
+        <div class="card">
+            <h2>Premarket ORB Checklist – NIFTY 50</h2>
+            <p>Live pre-market diagnostics for your 5m ORB + Volume + ATR system.</p>
+
+            <div id="premarket-meta" style="font-size:0.9rem; color: var(--text-muted); margin-bottom: 10px;">
+                Loading premarket data…
+            </div>
+
+            <h3 style="margin-top: 0.75rem; margin-bottom: 0.25rem;">Checkpoints</h3>
+            <div id="premarket-checkpoints" style="display:flex; flex-direction:column; gap:6px;"></div>
+
+            <h3 style="margin-top: 0.75rem; margin-bottom: 0.25rem;">Suggestions</h3>
+            <div id="premarket-suggestions" style="display:flex; flex-direction:column; gap:6px;"></div>
+        </div>
+
         </div>
 
         <!-- Auth Panel -->
@@ -509,6 +570,88 @@
             xhr.send(null);
         }
     });
+
+        async function loadPremarket() {
+        try {
+            const res = await fetch("{{ url_for('premarket_summary') }}");
+            const data = await res.json();
+
+            const metaEl = document.getElementById("premarket-meta");
+            const cpEl = document.getElementById("premarket-checkpoints");
+            const sgEl = document.getElementById("premarket-suggestions");
+
+            const s = data.summary;
+            const nr = s.nifty_regime;
+            const gs = s.global_snapshot;
+            const oi = s.oi_pressure;
+
+            if (metaEl) {
+                metaEl.innerHTML = `
+                    <div><strong>As of (IST):</strong> ${s.as_of_ist}</div>
+                    <div><strong>ATR(20):</strong> ${nr.atr_20} pts |
+                         <strong>Prev Range:</strong> ${nr.day_range_prev} pts</div>
+                    <div><strong>Trend:</strong> ${nr.trend_regime}</div>
+                    <div><strong>Volatility:</strong> ${nr.vol_regime}</div>
+                    <div><strong>Gap:</strong> ${nr.gap_points} pts (${nr.gap_multiple_atr} × ATR)
+                         – ${nr.gap_type}</div>
+                    <div><strong>India VIX:</strong> ${s.india_vix}</div>
+                    <div><strong>Global:</strong> S&P ${gs.spx_change}%,
+                         Nasdaq ${gs.nasdaq_change}%, VIX ${gs.vix_change}%,
+                         Crude ${gs.crude_change}%</div>
+                    <div><strong>Global Mood:</strong> ${gs.risk_mood}</div>
+                    <div><strong>OI:</strong> ${
+                        oi
+                            ? `Spot ${oi.spot}, CE OI ±200: ${oi.ce_oi_near}, PE OI ±200: ${oi.pe_oi_near} (${oi.pressure})`
+                            : "N/A"
+                    }</div>
+                `;
+            }
+
+            if (cpEl) {
+                cpEl.innerHTML = "";
+                data.checkpoints.forEach(cp => {
+                    const div = document.createElement("div");
+                    div.className = "checkpoint-item";
+                    div.innerHTML = `
+                        <div class="checkpoint-title">
+                            ${cp.title}
+                            <span class="checkpoint-badge ${cp.status}">${cp.status}</span>
+                        </div>
+                        <div>${cp.message}</div>
+                    `;
+                    cpEl.appendChild(div);
+                });
+            }
+
+            if (sgEl) {
+                sgEl.innerHTML = "";
+                data.suggestions.forEach(sg => {
+                    const div = document.createElement("div");
+                    div.className = "suggestion-item";
+                    div.innerHTML = `
+                        <div class="checkpoint-title">${sg.title}</div>
+                        <div>${sg.detail}</div>
+                    `;
+                    sgEl.appendChild(div);
+                });
+            }
+
+        } catch (err) {
+            const metaEl = document.getElementById("premarket-meta");
+            if (metaEl) {
+                metaEl.textContent = "Error loading premarket data: " + err;
+            }
+            console.error("Premarket fetch failed:", err);
+        }
+    }
+
+    // Kick off once page loads, and refresh every few minutes if you want
+    document.addEventListener("DOMContentLoaded", function () {
+        loadPremarket();
+        // Optional: refresh every 5 minutes
+        // setInterval(loadPremarket, 5 * 60 * 1000);
+    });
+
 </script>
 
 

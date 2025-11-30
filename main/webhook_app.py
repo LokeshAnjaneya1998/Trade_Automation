@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from functools import wraps
 from logging.handlers import RotatingFileHandler
+from src.premarket import PremarketAnalyzer
+
 
 from flask import (
     Flask,
@@ -17,10 +19,12 @@ from flask import (
     session,
     redirect,
     url_for,
+    flash
 )
 from src.fyers_integration import FyersIntegration
 from waitress import serve
 from datetime import timedelta
+from src.config_manager import ConfigManager
 
 # ──────────────────────────────────────────────────────────────
 # Global trading state
@@ -44,8 +48,15 @@ def set_trading_enabled(value: bool):
 BASE_DIR = Path(__file__).resolve().parents[1]  # project root
 TEMPLATES_DIR = BASE_DIR / "templates"
 
+
+
 app = Flask(__name__, template_folder=str(TEMPLATES_DIR))
 fyers_integration = FyersIntegration()
+premarket_analyzer = PremarketAnalyzer(symbol="NIFTY")
+config_manager = ConfigManager()
+config = config_manager.config
+
+
 
 app.config.update(
     SESSION_COOKIE_SECURE=True,      # only over HTTPS
@@ -57,10 +68,6 @@ app.config.update(
 LOG_FILE = BASE_DIR / "configandlogs" / "webhook.log"
 
 # Admin credentials + secret key from environment (override defaults in systemd)
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "LokeshTrading")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "LoIn2047@912")
-SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
-app.secret_key = SECRET_KEY  # for session cookies
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 
@@ -147,6 +154,7 @@ def get_latest_auth_url(log_text: str) -> str | None:
     return None
 
 
+
 # ──────────────────────────────────────────────────────────────
 # Routes: Auth + Index
 # ──────────────────────────────────────────────────────────────
@@ -155,10 +163,14 @@ def get_latest_auth_url(log_text: str) -> str | None:
 def login():
     error = None
     if request.method == "POST":
-        username = request.form.get("username", "")
+        username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
 
-        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+        # ✅ Compare with values from config.json
+        if (
+            username == config.web_login.username
+            and password == config.web_login.password
+        ):
             session.clear()
             session["logged_in"] = True
             session.permanent = True  # uses PERMANENT_SESSION_LIFETIME
@@ -363,6 +375,22 @@ def resume_trading():
         redirect_url=url_for("dashboard"),
         delay_ms=3000,
     )
+
+
+@app.route("/api/premarket/summary", methods=["GET"])
+@login_required
+def premarket_summary():
+    """
+    Returns premarket summary, checkpoints and suggestions as JSON
+    so the dashboard can render them.
+    """
+    try:
+        data = premarket_analyzer.analyze_as_dict()
+    except Exception as exc:
+        logger.error(f"Premarket analysis failed: {exc}")
+        return jsonify({"error": "Premarket analysis failed", "detail": str(exc)}), 503
+
+    return jsonify(data), 200
 
 
 # ──────────────────────────────────────────────────────────────

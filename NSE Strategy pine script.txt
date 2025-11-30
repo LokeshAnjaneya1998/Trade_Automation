@@ -1,46 +1,152 @@
-v//@version=6
+//@version=6
 //───────────────────────────────────────────────────────────────────────────────
-//  NIFTY Futures – ORB (Break-Retest-Re-break)  |  5-minute chart
+//  NIFTY ORB (Options) – 5m  |  Retest + Re-break + Option Alerts (bucketed)
 //───────────────────────────────────────────────────────────────────────────────
-strategy("NIFTY ORB (Retest + Re-break) – 5m",
+strategy("NIFTY ORB (Options) – 5m",
          overlay            = true,
          calc_on_every_tick = true,
+         initial_capital = 10000000,
          default_qty_type   = strategy.fixed,
          default_qty_value  = 75,
+         commission_type = strategy.commission.cash_per_order,
+         commission_value = 185,
          pyramiding         = 2)
 
-// ══════════════════ INPUTS ════════════════════════════════════════════════════
+// ═════════════ Option params (AUTO month-letter code or MANUAL) ══════════════
+var label cfg = na
+useAutoExpiry = input.bool(true, "Auto weekly expiry (next Tue, IST)")
+optExpiry     = input.string("YYMDD", "Manual expiry code (YY{MonthLetter}DD; e.g., 25O07=2025-Oct-07)")
+optQty        = input.int(75,  "Option qty (per alert)")
+strikeStep    = input.int(50,  "Strike step")
+callOffset    = input.int(200, "CE offset (+pts)")
+putOffset     = input.int(100, "PE offset (−pts)")
+dayofWeek     = input.int(3, "Day of the week")
+symPrefix     = input.string("NSE:", "Symbol prefix (e.g., NSE:, NFO:, or blank)")
+underlyingSym = input.string("NIFTY", "Underlying in option code (NIFTY/BANKNIFTY)")
+
+ceil_to_step(v, s)  => s == 0 ? v : math.ceil(v/s)*s
+floor_to_step(v, s) => s == 0 ? v : math.floor(v/s)*s
+
+var string TZ = "Asia/Kolkata"
+
+//──────────────────────────────────────────────────────────────
+// EXPIRY HELPERS — Stable, direct weekday math (IST, no loops)
+//──────────────────────────────────────────────────────────────
+var string[] MONTH_LETTERS = array.from("J","F","M","A","M","J","J","A","S","O","N","D")
+var string[] MONTH_3L      = array.from("JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC")
+
+add_days(ts, d) =>
+    ts + d * 24 * 60 * 60 * 1000
+
+_todayY() => year(timenow, TZ)
+_todayM() => month(timenow, TZ)
+_todayD() => dayofmonth(timenow, TZ)
+
+// Midnight IST today
+midnight_today_ist() =>
+    timestamp(TZ, _todayY(), _todayM(), _todayD(), 0, 0)
+
+// After market close?
+is_after_close_ist() =>
+    timenow >= timestamp(TZ, _todayY(), _todayM(), _todayD(), 15, 30)
+
+// Compute next expiry timestamp directly
+next_expiry_ts(targetDow) =>
+    base     = midnight_today_ist()
+    curDow   = dayofweek(timenow, TZ)            // 1=Mon .. 7=Sun
+    // distance to next target weekday (0..6)
+    offset   = (targetDow - curDow + 7) % 7
+    // If today is target day
+    offset   := offset == 0 ? (is_after_close_ist() ? 7 : 0) : offset
+    add_days(base, offset)
+
+// Monthly detection: adding 7 days crosses month ⇒ last such weekday in month
+is_last_weekday_of_month(ts) =>
+    month(ts, TZ) != month(add_days(ts, 7), TZ)
+
+// Formatters
+format_weekly_code(ts) =>
+    yy = year(ts, TZ) % 100
+    mm = month(ts, TZ)
+    dd = dayofmonth(ts, TZ)
+    mL = array.get(MONTH_LETTERS, mm - 1)
+    str.tostring(yy, "00") + mL + str.tostring(dd, "00")
+
+format_monthly_code(ts) =>
+    yy = year(ts, TZ) % 100
+    mm = month(ts, TZ)
+    dd = dayofmonth(ts, TZ)
+    m3 = array.get(MONTH_3L, mm - 1)
+    str.tostring(yy, "00") + m3
+
+get_expiry_code() =>
+    if not useAutoExpiry
+        str.upper(optExpiry)
+    else
+        ts = next_expiry_ts(dayofWeek)
+        is_last_weekday_of_month(ts) ? format_monthly_code(ts) : format_weekly_code(ts)
+
+
+
+// Draw debug label of actual selected date
+var label dbg = na
+if barstate.islast
+    expiryCode = get_expiry_code()
+    tsSel = next_expiry_ts(dayofWeek)
+    debugTxt = "SelDate=" + str.format_time(tsSel, "yyyy-MMM-dd", TZ) + " | Code=" + expiryCode
+    if not na(dbg)
+        label.delete(dbg)
+    //dbg := label.new(bar_index, high, debugTxt, style=label.style_label_down, textcolor=color.yellow)
+
+
+// Build option symbol (computed at runtime)
+build_opt_symbol(isCall, px) =>
+    strike = isCall ? ceil_to_step(px + callOffset, strikeStep) : floor_to_step(px - putOffset, strikeStep)
+    expiry = get_expiry_code()
+    symPrefix + underlyingSym + expiry + str.tostring(strike) + (isCall ? "CE" : "PE")
+
+// Webhook payloads
+build_json_qty(sym, side, qty) =>
+    '{"event":"place_order","order_details":{"symbol":"' + sym + '","qty":' + str.tostring(qty) + ',"type":2,"side":"' + side + '","productType":"INTRADAY","limitPrice":0,"stopPrice":0,"validity":"DAY","disclosedQty":0,"offlineOrder":false,"stopLoss":0,"takeProfit":0}}'
+
+// (Optional) show effective expiry
+if barstate.islast
+    labTxtplot      = input.bool(true,  "display expiry")
+    labTxt = "Expiry=" + get_expiry_code() + " (" + (useAutoExpiry ? "AUTO" : "MANUAL") + ")"
+    if not na(cfg)
+        label.delete(cfg)
+    if labTxtplot
+        cfg := label.new(bar_index, high, labTxt, style=label.style_label_down, textcolor=color.white)
+
+// ══════════════════ ORB inputs ═══════════════════════════════════════════════
 stopBufferPts  = input.float(2.0,  "Stop-loss buffer (pts)", step = 0.25)
-// riskReward    = input.float(1.5, "Risk-Reward (TP = RR × SL)", minval = 0.1, step = 0.1)
 entryBufferPts = input.float(15.0, "Retest buffer into OR (pts)", step = 0.25)
 plotRange      = input.bool(true,  "Plot first-5-min range")
 retestExpiry   = input.int (6,     "Cancel sequence after n bars", minval = 1)
 
-// Congestion filter controls (KEEPING stuck-bars logic)
+// Congestion filter controls
 proxPts        = input.float(4.0,  "Near-OR proximity (pts) to call it ‘stuck’", step = 0.25)
 stuckBars      = input.int  (3,    "Consecutive bars near OR to block entry", minval = 1, maxval = 6)
 
-var string TZ = "Asia/Kolkata"
-finalBar = barstate.isconfirmed  // bar-close gate
+finalBar = barstate.isconfirmed
 
-// ══════════════════ SESSION TIMES ════════════════════════════════════════════
+// ══════════════════ Session times (IST) ══════════════════════════════════════
 startTime      = timestamp(TZ, year, month, dayofmonth, 9, 15)
 endTime        = timestamp(TZ, year, month, dayofmonth, 15, 00)
-entryStartTime = timestamp(TZ, year, month, dayofmonth, 9, 30)
+entryStartTime = timestamp(TZ, year, month, dayofmonth, 9, 25)
 entryEndTime   = timestamp(TZ, year, month, dayofmonth, 12, 25)
 entryWindow    = time >= entryStartTime and time <= entryEndTime
 
-// ══════════════════ OPENING RANGE (09:15–09:20 / :25 / :30) ═════════════════
+// ══════════════════ Opening ranges (09:15–:20 / :25 / :30) ══════════════════
 newDay   = timeframe.change("D")
-
-var float orHigh   = na
-var float orLow    = na
-var float orHigh10 = na
-var float orLow10  = na
-var float orHigh15 = na
-var float orLow15  = na
-var float orOpen15 = na
-var float orClose15= na
+var float orHigh    = na
+var float orLow     = na
+var float orHigh10  = na
+var float orLow10   = na
+var float orHigh15  = na
+var float orLow15   = na
+var float orOpen15  = na
+var float orClose15 = na
 var bool  rangeLocked = false
 
 barH = hour(time, TZ)
@@ -50,14 +156,14 @@ inORbuild10 = (barH == 9 and barM >= 15 and barM < 25)
 inORbuild15 = (barH == 9 and barM >= 15 and barM < 30)
 
 if newDay
-    orHigh      := na
-    orLow       := na
-    orHigh10    := na
-    orLow10     := na
-    orHigh15    := na
-    orLow15     := na
-    orOpen15    := na
-    orClose15   := na
+    orHigh    := na
+    orLow     := na
+    orHigh10  := na
+    orLow10   := na
+    orHigh15  := na
+    orLow15   := na
+    orOpen15  := na
+    orClose15 := na
     rangeLocked := false
 
 if inORbuild
@@ -79,15 +185,15 @@ else if not rangeLocked and not na(orHigh) and not na(orLow)
     rangeLocked := true
 
 plot(plotRange and rangeLocked ? orHigh : na, "OR High", color=color.green, linewidth=2)
-plot(plotRange and rangeLocked ? orLow  : na, "OR Low",  color=color.red,   linewidth=2)
+plot(plotRange and rangeLocked ? orLow  : na,  "OR Low",  color=color.red,   linewidth=2)
 
-// ══════════════════ FLAGS, HELPERS, FILTERS ══════════════════════════════════
+// ══════════════════ Flags / helpers / filters ════════════════════════════════
 var int longState    = 0   // 0-idle | 1-breakout | 2-retest
 var int shortState   = 0
 var int longBaseBar  = na
 var int shortBaseBar = na
 
-// NEW: retest counters (bar-close counting) – max 2 allowed
+// Retest counters
 var int  longRetests     = 0
 var int  shortRetests    = 0
 var bool longRetouching  = false
@@ -96,14 +202,13 @@ var bool shortRetouching = false
 thickGreen = close > open and (close - open) / math.max(high - low, 1e-6) >= 0.35
 thickRed   = open > close and (open - close) / math.max(high - low, 1e-6) >= 0.35
 
-inRangeFirst5      = orHigh10 > orHigh or orLow10 < orLow or orHigh15 > orHigh or orLow15 < orLow
+inRangeFirst5 = orHigh10 > orHigh or orLow10 < orLow or orHigh15 > orHigh or orLow15 < orLow
 
-
-// Breakout (bar-close gated on purpose)
-defLongBreak  = rangeLocked and finalBar and open + 5 > orHigh and close > orHigh
-defShortBreak = rangeLocked and finalBar and open < orLow + 5  and close < orLow
-reLongBreak   = rangeLocked and open >= orHigh and close >= orHigh
-reShortBreak  = rangeLocked and open <= orLow  and close <= orLow
+// Breakout (bar-close gated)
+defLongBreak  = rangeLocked and finalBar and open + 6 > orHigh and close > orHigh
+defShortBreak = rangeLocked and finalBar and open < orLow + 6  and close < orLow
+reLongBreak   = defLongBreak
+reShortBreak  = defShortBreak
 
 // Volatility & stretch
 atrLen      = 14
@@ -112,26 +217,35 @@ atrMedian   = ta.median(atrSeries, 60)
 volOK       = atrSeries > atrMedian
 
 orWidth  = orHigh - orLow
-atr14    = atrSeries
-stretch  = orWidth / atr14
+stretch  = orWidth / atrSeries
 
-riskReward = stretch > 1.8 ? 1.0 : 3.0
-bigBox   = orWidth > 58
-boxHalf  = orWidth * 0.5  // (not used in this version’s SL)
-
-maxLossInr = input.int(9400, "Catastrophe-stop ₹ risk", minval = 1000, step = 500)
+riskReward = stretch > 3 ? 0.75 : 3.0
+maxLossInr = input.int(8700, "Catastrophe-stop ₹ risk", minval = 1000, step = 500)
 lotQty     = 75
 maxLossPts = maxLossInr / lotQty
+volOKVol   = volume > ta.sma(volume, 20) * 0.3
 
-volOKVol = volume > ta.sma(volume, 20) * 0.3
+// ══════════════════ DIRECTION BUCKETS (aggregate per day) ════════════════════
+// Long (CE) bucket
+var bool   L_active   = false
+var string L_sym      = ""
+var int    L_qty      = 0
+var float  L_sl       = na
+var float  L_tp       = na
+var int    L_openBar  = na  // last entry bar for same-bar guard
 
-var float longOneR        = na
-var float shortOneR       = na
-var float dynLongTrailSL  = na
-var float dynShortTrailSL = na
+// Short (PE) bucket
+var bool   S_active   = false
+var string S_sym      = ""
+var int    S_qty      = 0
+var float  S_sl       = na
+var float  S_tp       = na
+var int    S_openBar  = na
 
-// ══════════════════ DAILY RESET ══════════════════════════════════════════════
+// Reset buckets each new day
 if newDay
+    L_active := false, L_sym := "", L_qty := 0, L_sl := na, L_tp := na, L_openBar := na
+    S_active := false, S_sym := "", S_qty := 0, S_sl := na, S_tp := na, S_openBar := na
     longState  := 0
     shortState := 0
     longRetests := 0
@@ -139,140 +253,220 @@ if newDay
     longRetouching := false
     shortRetouching := false
 
-// ══════════════════ STUCK-BARS CONGESTION FILTER (bugfix only) ═══════════════
-// Near-5m OR or Near-15m OR
+// ══════════════════ Stuck-bars (keep) ════════════════════════════════════════
 near5Hi   = not na(orHigh)   and math.abs(low  - orHigh)  <= proxPts
 near15Hi  = not na(orHigh15) and math.abs(low  - orHigh15)<= proxPts
 near5Lo   = not na(orLow)    and math.abs(high - orLow)   <= proxPts
 near15Lo  = not na(orLow15)  and math.abs(high - orLow15) <= proxPts
 
-// BUGFIX: separate resistance vs support (they were identical before)
-nearRes = (near5Hi or near15Hi) ? 1.0 : 0.0     // near OR highs only
-nearSup = (near5Lo or near15Lo) ? 1.0 : 0.0     // near OR lows only
+nearRes = (near5Hi or near15Hi) ? 1.0 : 0.0
+nearSup = (near5Lo or near15Lo) ? 1.0 : 0.0
 
-// “stuck” = every one of the last `stuckBars` bars was near the level
 stuckLong  = nz(ta.sma(nearRes, stuckBars) * stuckBars, 0) == stuckBars
 stuckShort = nz(ta.sma(nearSup, stuckBars) * stuckBars, 0) == stuckBars
 
-plotshape(stuckLong,  title="StuckLong",  style=shape.circle, color=color.orange, location=location.abovebar, size=size.tiny)
-plotshape(stuckShort,  title="StuckShort", style=shape.circle, color=color.aqua,   location=location.belowbar, size=size.tiny)
+plotshape(stuckLong,  "StuckLong",  shape.circle, color=color.orange, location=location.abovebar, size=size.tiny)
+plotshape(stuckShort, "StuckShort", shape.circle, color=color.aqua,   location=location.belowbar, size=size.tiny)
 
 
-
-// ══════════════════ RETEST COUNTING (bar-close only) ═════════════════════════
+// ══════════════════ Retest counting (bar-close) ══════════════════════════════
 if finalBar
-    // LONG: count a fresh touch into retest zone
     if (longState == 1 or longState == 2)
         longTouchNow = (low <= orHigh + entryBufferPts)
         if longTouchNow and not longRetouching
-            longRetests    += 1
+            longRetests += 1
             longRetouching := true
         else if not longTouchNow
             longRetouching := false
-    // SHORT: count a fresh touch into retest zone
     if (shortState == 1 or shortState == 2)
         shortTouchNow = (high >= orLow - entryBufferPts)
         if shortTouchNow and not shortRetouching
-            shortRetests    += 1
+            shortRetests += 1
             shortRetouching := true
         else if not shortTouchNow
             shortRetouching := false
 
-// ══════════════════ MAIN LOGIC ═══════════════════════════════════════════════
+// ══════════════════ Main logic (entries bar-close confirmed) ═════════════════
 if rangeLocked and inRangeFirst5
-    // ───── LONG side ─────
+    // LONG
     if longState == 0 and defLongBreak and volOK
         longState      := 1
         longBaseBar    := bar_index
         longRetests    := 0
         longRetouching := false
-
     else if longState == 1
-        // NEW: timeout also in state-1 (non-retesting breakouts expire)
         if bar_index - longBaseBar > retestExpiry
             longState := 0
             longRetouching := false
             longRetests := 0
         if finalBar and low <= orHigh + entryBufferPts
             longState := 2
-
     else if longState == 2
         if bar_index - longBaseBar > retestExpiry
             longState := 0
             longRetouching := false
             longRetests := 0
-        // ENTER only if ≤ 2 retests AND not stuck under OR highs
         if finalBar and reLongBreak and thickGreen and high[1] > high[2] and volOKVol and entryWindow and (longRetests <= 2) and not stuckLong
             entry  = close
-            slBase = (orLow + stopBufferPts)  // your current SL rule
+            slBase = (orLow + stopBufferPts)
             risk   = entry - slBase
             tp     = entry + risk * riskReward
-
-            longOneR       := entry + risk
-            dynLongTrailSL := na
-            delayBars      = bar_index - longBaseBar
-
-            strategy.entry("Long", strategy.long, comment = "d=" + str.tostring(delayBars) + ",r=" + str.tostring(longRetests) + ",s=" + str.tostring(stretch))
-
-            // catastrophe stop (only if tighter than slBase)
             catStopLong = entry - maxLossPts
-            if catStopLong > slBase
-                strategy.exit("L-Cap", from_entry="Long", stop=catStopLong, comment="R=-cap w=" + str.tostring(orWidth))
+            actSL_long  = catStopLong > slBase ? catStopLong : slBase
 
-            strategy.exit("L-Exit", from_entry="Long", stop=slBase, limit=tp, comment = "w=" + str.tostring(orWidth))
+            // Strategy position (unchanged)
+            strategy.entry("Long", strategy.long,
+                           comment = "d=" + str.tostring(bar_index - longBaseBar) + ",r=" + str.tostring(longRetests) + ",s=" + str.tostring(stretch))
+            if catStopLong > slBase
+                strategy.exit("L-Cap", from_entry="Long", stop = catStopLong, comment = "cap")
+            strategy.exit("L-Exit", from_entry="Long", stop = slBase, limit = tp, comment = "TP/SL")
+
+            // ── Bucketed alerts (aggregate qty, single symbol per day) ──
+            if not L_active
+                // First long of the day → pick symbol and seed bucket
+                L_sym     := build_opt_symbol(true, entry)
+                L_qty     := optQty
+                L_sl      := actSL_long
+                L_tp      := tp
+                L_openBar := bar_index
+                L_active  := true
+                alert(build_json_qty(L_sym, "buy", optQty), alert.freq_once_per_bar)
+            else
+                // Add-on: use same symbol, accumulate qty, tighten stops if needed
+                L_qty += optQty
+                L_sl   := math.max(L_sl, actSL_long) // for longs, tighter (higher) stop dominates
+                // Keep TP as the *nearest* of existing/new to increase chance of a single exit
+                L_tp   := math.min(L_tp, tp)
+                L_openBar := bar_index
+                alert(build_json_qty(L_sym, "buy", optQty), alert.freq_once_per_bar)
 
             longState := 0
             longRetouching := false
             longRetests := 0
 
-    // ───── SHORT side ─────
+    // SHORT
     if shortState == 0 and defShortBreak and volOK
         shortState      := 1
         shortBaseBar    := bar_index
         shortRetests    := 0
         shortRetouching := false
-
     else if shortState == 1
-        // NEW: timeout also in state-1
         if bar_index - shortBaseBar > retestExpiry
             shortState := 0
             shortRetouching := false
             shortRetests := 0
         if finalBar and high >= orLow - entryBufferPts
             shortState := 2
-
     else if shortState == 2
         if bar_index - shortBaseBar > retestExpiry
             shortState := 0
             shortRetouching := false
             shortRetests := 0
-        // ENTER only if ≤ 2 retests AND not stuck near OR lows
         if finalBar and reShortBreak and thickRed and low[1] < low[2] and volOKVol and entryWindow and (shortRetests <= 2) and not stuckShort
             entry  = close
             slBase = (orHigh - stopBufferPts)
             risk   = slBase - entry
             tp     = entry - risk * riskReward
-
-            shortOneR       := entry - risk
-            dynShortTrailSL := na
-            delayBars       = bar_index - shortBaseBar
-
-            strategy.entry("Short", strategy.short, comment = "d=" + str.tostring(delayBars) + ",r=" + str.tostring(shortRetests) + ",s=" + str.tostring(stretch))
-
             catStopShort = entry + maxLossPts
-            if catStopShort < slBase
-                strategy.exit("S-Cap", from_entry="Short", stop=catStopShort, comment="w=" + str.tostring(orWidth))
+            actSL_short  = catStopShort < slBase ? catStopShort : slBase
 
-            strategy.exit("S-Exit", from_entry="Short", stop=slBase, limit=tp, comment = "w=" + str.tostring(orWidth))
+            strategy.entry("Short", strategy.short,
+                           comment = "d=" + str.tostring(bar_index - shortBaseBar) + ",r=" + str.tostring(shortRetests) + ",s=" + str.tostring(stretch))
+            if catStopShort < slBase
+                strategy.exit("S-Cap", from_entry="Short", stop = catStopShort, comment = "cap")
+            strategy.exit("S-Exit", from_entry="Short", stop = slBase, limit = tp, comment = "TP/SL")
+
+            // Bucketed alerts for shorts
+            if not S_active
+                S_sym     := build_opt_symbol(false, entry)
+                S_qty     := optQty
+                S_sl      := actSL_short
+                S_tp      := tp
+                S_openBar := bar_index
+                S_active  := true
+                alert(build_json_qty(S_sym, "buy", optQty), alert.freq_once_per_bar)
+            else
+                S_qty += optQty
+                S_sl   := math.min(S_sl, actSL_short) // for shorts, tighter (lower) stop dominates
+                S_tp   := math.max(S_tp, tp)          // nearest TP for shorts is the larger (less room down)
+                S_openBar := bar_index
+                alert(build_json_qty(S_sym, "buy", optQty), alert.freq_once_per_bar)
 
             shortState := 0
             shortRetouching := false
             shortRetests := 0
 
-// ══════════════════ DAILY RESET & FORCED FLAT ═══════════════════════════════
-if newDay
-    longState  := 0
-    shortState := 0
+// ══════════════════ Intrabar exit monitor (bucket-level, single alert) ═══════
+// Guard against same-bar entry→exit by comparing to last entry bar.
 
-if barstate.isconfirmed and time >= endTime
+if L_active
+    if bar_index != L_openBar
+        // Long: exit if TP hit (high >= L_tp) or SL hit (low <= L_sl)
+        if (high >= L_tp) or (low <= L_sl)
+            alert(build_json_qty(L_sym, "sell", L_qty), alert.freq_once_per_bar)
+            L_active := false, L_sym := "", L_qty := 0, L_sl := na, L_tp := na, L_openBar := na
+
+if S_active
+    if bar_index != S_openBar
+        // Short: exit if TP hit (low <= S_tp) or SL hit (high >= S_sl)
+        if (low <= S_tp) or (high >= S_sl)
+            alert(build_json_qty(S_sym, "sell", S_qty), alert.freq_once_per_bar)
+            S_active := false, S_sym := "", S_qty := 0, S_sl := na, S_tp := na, S_openBar := na
+
+
+// ════════════════ Combined max loss across all open trades ══════════════════
+// If total OPEN loss (sum of all negative P/L) reaches -maxLossInr, flatten.
+
+if strategy.opentrades > 0
+    float totalOpenLoss = 0.0
+
+    // Sum only the losing trades
+    for tradeNo = 0 to strategy.opentrades - 1
+        thisPl = strategy.opentrades.profit(tradeNo)  // P/L in INR
+        if thisPl < 0
+            totalOpenLoss += thisPl  // thisPl is negative, so totalOpenLoss is negative
+
+    // Example: trade1 = -4000, trade2 = -5400 → totalOpenLoss = -9400
+    if totalOpenLoss <= -maxLossInr
+        // Flatten all strategy positions
+        strategy.close_all(comment = "Combined max loss hit")
+
+        // Flatten options buckets + send exit alerts
+
+        if L_active
+            alert(build_json_qty(L_sym, "sell", L_qty), alert.freq_once_per_bar)
+            L_active  := false
+            L_sym     := ""
+            L_qty     := 0
+            L_sl      := na
+            L_tp      := na
+            L_openBar := na
+
+        if S_active
+            alert(build_json_qty(S_sym, "sell", S_qty), alert.freq_once_per_bar)
+            S_active  := false
+            S_sym     := ""
+            S_qty     := 0
+            S_sl      := na
+            S_tp      := na
+            S_openBar := na
+
+
+
+// ══════════════════ EOD one-shot: close outstanding buckets ═════════════════
+var bool eodAlertSent = false
+if newDay
+    eodAlertSent := false
+
+if time >= endTime and not eodAlertSent
+    if L_active
+        alert(build_json_qty(L_sym, "sell", L_qty), alert.freq_once_per_bar)
+        L_active := false, L_sym := "", L_qty := 0, L_sl := na, L_tp := na, L_openBar := na
+    if S_active
+        alert(build_json_qty(S_sym, "sell", S_qty), alert.freq_once_per_bar)
+        S_active := false, S_sym := "", S_qty := 0, S_sl := na, S_tp := na, S_openBar := na
+    eodAlertSent := true
+
+// ══════════════════ Strategy forced flat at session end ══════════════════════
+if time >= endTime
     strategy.close_all(comment = "w = " + str.tostring(orWidth))
