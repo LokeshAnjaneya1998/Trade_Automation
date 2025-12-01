@@ -5,6 +5,7 @@ import sys
 import time
 import threading
 import re
+import html
 from pathlib import Path
 from functools import wraps
 from logging.handlers import RotatingFileHandler
@@ -249,8 +250,54 @@ def dashboard():
 @login_required
 def logs_only():
     log_text = read_log_tail(200)
-    log_html = make_links(log_text)
-    return log_html, 200
+    lines = [html.escape(line.rstrip()) for line in log_text.splitlines() if line.strip() != ""]
+    if lines:
+        sep = '<div class="log-separator"></div>'
+        body = sep.join(f'<div class="log-line">{line}</div>' for line in lines)
+    else:
+        body = '<div class="log-line">No logs yet.</div>'
+
+    page = f"""<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Recent logs - Latest 200</title>
+    <style>
+        body {{
+            margin: 0;
+            padding: 16px;
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            background: #0b1120;
+            color: #e5e7eb;
+        }}
+        h2 {{
+            margin-top: 0;
+            font-size: 1.2rem;
+        }}
+        .log-container {{
+            border: 1px solid #1f2937;
+            border-radius: 10px;
+            padding: 12px;
+            background: #0f172a;
+        }}
+        .log-line {{
+            padding: 6px 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }}
+        .log-separator {{
+            height: 1px;
+            background: #1f2937;
+            margin: 2px 0;
+        }}
+    </style>
+</head>
+<body>
+    <h2>Recent logs - Latest 200</h2>
+    <div class="log-container">{body}</div>
+</body>
+</html>"""
+    return page, 200
 
 
 # ──────────────────────────────────────────────────────────────
