@@ -118,7 +118,7 @@ def login_required(f):
             return redirect(url_for("login"))
 
         # If we've been inactive for > 10 minutes, force logout
-        if last_seen is not None and now - last_seen > 10 * 60:
+        if last_seen is not None and now - last_seen > 5 * 60:
             session.clear()
             return redirect(url_for("login"))
 
@@ -198,7 +198,7 @@ def login():
         ):
             session.clear()
             session["logged_in"] = True
-            session.permanent = True  # uses PERMANENT_SESSION_LIFETIME
+            session.permanent = False  # expire when browser closes
             session["last_seen"] = time.time()
             # single session token
             import uuid
