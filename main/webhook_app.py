@@ -300,6 +300,16 @@ def logs_only():
     return page, 200
 
 
+@app.route("/logs/snippet")
+@login_required
+def logs_snippet():
+    log_text = read_log_tail(10)
+    lines = [line.rstrip() for line in log_text.splitlines() if line.strip() != ""]
+    sep = "\n--------------------------------\n"
+    body = sep.join(lines) if lines else "No logs yet."
+    return app.response_class(body, mimetype="text/plain")
+
+
 # ──────────────────────────────────────────────────────────────
 # Routes: Fyers auth callback + webhook
 # ──────────────────────────────────────────────────────────────

@@ -77,7 +77,8 @@
 
         .card h2 { margin: 0 0 10px 0; font-size: 1rem; }
 
-        .stack { display: flex; flex-direction: column; gap: 10px; }
+        .controls-card { display: flex; flex-direction: column; }
+        .stack { display: flex; flex-direction: column; gap: 10px; flex: 1; }
 
         .btn {
             cursor: pointer;
@@ -145,7 +146,8 @@
             font-size: 0.78rem;
             line-height: 1.35;
             color: #e5e7eb;
-            max-height: 260px;
+            min-height: 260px;
+            flex: 1;
             overflow-y: auto;
             white-space: pre-wrap;
             width: 100%;
@@ -181,7 +183,7 @@
 
     <div class="grid">
         <!-- Left column: controls + auth + logs -->
-        <div class="card">
+        <div class="card controls-card">
             <h2 style="margin-top:0;">Bot Controls</h2>
             <div class="stack">
                 
@@ -395,7 +397,7 @@
         const box = document.getElementById("log-snippet");
         if (!box) return;
         try {
-            const res = await fetch("{{ url_for('logs_only') }}");
+            const res = await fetch("{{ url_for('logs_snippet') }}");
             const text = await res.text();
             const lines = text.split(/\r?\n/).filter(Boolean);
             const sep = "\n--------------------------------\n";
