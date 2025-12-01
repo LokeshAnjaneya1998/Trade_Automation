@@ -147,7 +147,7 @@
             margin-bottom: 10px;
         }
 
-                .checkpoint-item, .suggestion-item {
+        .checkpoint-item, .suggestion-item {
             padding: 8px 10px;
             border-radius: 6px;
             border: 1px solid rgba(148, 163, 184, 0.3);
@@ -425,7 +425,7 @@
                         class="btn btn-blue confirm-action"
                         data-action="restart-bot"
                         data-message="Restart the bot process? The server will briefly go offline and come back.">
-                        <span class="icon">🔄</span>
+                        <span class="icon">⟳</span>
                         <span>Restart Bot</span>
                     </button>
                 </form>
@@ -443,7 +443,7 @@
                     type="button"
                     class="btn btn-blue"
                     onclick="window.open('{{ auth_url }}', '_blank');">
-                    <span class="icon">➤</span>
+                    <span class="icon">🔗</span>
                     <span>Authentication link</span>
                 </button>
 
@@ -459,11 +459,23 @@
     </div>
 
     <div class="card">
-        <h2>Premarket ORB Checklist – NIFTY 50</h2>
-        <p>Live pre-market diagnostics for your 5m ORB + Volume + ATR system.</p>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+            <div>
+                <h2 style="margin:0;">Premarket ORB Checklist – NIFTY 50</h2>
+                <p style="margin:2px 0 0 0;">Live pre-market diagnostics for your 5m ORB + Volume + ATR system.</p>
+            </div>
+            <button
+                type="button"
+                class="btn btn-blue"
+                id="premarket-refresh-btn"
+                style="white-space:nowrap;"
+            >
+                ⟳ Refresh
+            </button>
+        </div>
 
         <div id="premarket-meta" style="font-size:0.9rem; color: var(--text-muted); margin-bottom: 10px;">
-            Loading premarket data…
+            Loading premarket data...
         </div>
 
         <h3 style="margin-top: 0.75rem; margin-bottom: 0.25rem;">Checkpoints</h3>
@@ -570,7 +582,12 @@
         }
     });
 
-        async function loadPremarket() {
+    async function loadPremarket() {
+        const btn = document.getElementById("premarket-refresh-btn");
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = "Refreshing...";
+        }
         try {
             const res = await fetch("{{ url_for('premarket_summary') }}");
             const data = await res.json();
@@ -641,12 +658,21 @@
                 metaEl.textContent = "Error loading premarket data: " + err;
             }
             console.error("Premarket fetch failed:", err);
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = "⟳ Refresh";
+            }
         }
     }
 
     // Kick off once page loads, and refresh every few minutes if you want
     document.addEventListener("DOMContentLoaded", function () {
         loadPremarket();
+        const refreshBtn = document.getElementById("premarket-refresh-btn");
+        if (refreshBtn) {
+            refreshBtn.addEventListener("click", loadPremarket);
+        }
         // Optional: refresh every 5 minutes
         // setInterval(loadPremarket, 5 * 60 * 1000);
     });
