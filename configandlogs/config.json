@@ -3,7 +3,7 @@
     "redirect_uri": "https://autotradingindialokesh.trade/capture_auth_code",
     "secret_key": "",
     "auth_code": "",
-    "access_token": "token",
+    "access_token": "tokens",
     "web_login": {
     "username": "",
     "password": ""
