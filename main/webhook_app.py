@@ -67,8 +67,16 @@ app.secret_key = APP_SECRET
 
 
 
+# Make cookies work on http during local/dev runs unless overridden
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
 app.config.update(
-    SESSION_COOKIE_SECURE=True,      # only over HTTPS
+    SESSION_COOKIE_SECURE=SESSION_COOKIE_SECURE,
     SESSION_COOKIE_HTTPONLY=True,    # JS cannot read cookies
     SESSION_COOKIE_SAMESITE="Lax",   # mitigates CSRF; "Strict" if you want maximum lock
     PERMANENT_SESSION_LIFETIME=timedelta(minutes=10),
