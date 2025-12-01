@@ -55,6 +55,13 @@ fyers_integration = FyersIntegration()
 premarket_analyzer = PremarketAnalyzer(symbol="NIFTY")
 config_manager = ConfigManager()
 config = config_manager.config
+APP_SECRET = (
+    os.getenv("FLASK_SECRET_KEY")
+    or os.getenv("SECRET_KEY")
+    or config.secret_key
+)
+
+app.secret_key = APP_SECRET
 
 
 
