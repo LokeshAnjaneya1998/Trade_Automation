@@ -273,6 +273,21 @@
         }
     });
 
+    let skipLogout = false;
+
+    function sendSilentLogout() {
+        if (skipLogout) return;
+        try {
+            var url = "{{ url_for('logout_silent') }}";
+            var data = new Blob([], { type: 'application/x-www-form-urlencoded' });
+            navigator.sendBeacon(url, data);
+        } catch (e) {
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", "{{ url_for('logout_silent') }}", false);
+            xhr.send(null);
+        }
+    }
+
     async function loadPremarket() {
         const btn = document.getElementById("premarket-refresh-btn");
         if (btn) {
@@ -371,6 +386,17 @@
     }
 
     document.addEventListener("DOMContentLoaded", function () {
+        // mark control forms to skip logout beacon during internal submits
+        document.querySelectorAll('form').forEach(function (form) {
+            form.addEventListener('submit', function () {
+                skipLogout = true;
+                setTimeout(() => { skipLogout = false; }, 2000);
+            });
+        });
+
+        window.addEventListener("beforeunload", sendSilentLogout);
+        window.addEventListener("pagehide", sendSilentLogout);
+
         loadPremarket();
         refreshLogSnippet();
         const refreshBtn = document.getElementById("premarket-refresh-btn");
