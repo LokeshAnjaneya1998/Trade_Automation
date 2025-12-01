@@ -363,3 +363,16 @@
 
 </body>
 </html>
+<script>
+    // Log out silently when tab/window is closed
+    window.addEventListener("beforeunload", function () {
+        try {
+            var url = "{{ url_for('logout_silent') }}";
+            var data = new Blob([], { type: 'application/x-www-form-urlencoded' });
+            navigator.sendBeacon(url, data);
+        } catch (e) {
+            var xhr = new XMLHttpRequest();
+            xhr.open("POST", "{{ url_for('logout_silent') }}", false);
+            xhr.send(null);
+        }
+    });

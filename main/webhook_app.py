@@ -36,6 +36,7 @@ from src.config_manager import ConfigManager
 logger = logging.getLogger(__name__)
 
 TRADING_ENABLED = True  # in-memory switch
+CURRENT_SESSION_TOKEN: str | None = None  # track single active session
 
 
 def set_trading_enabled(value: bool):
@@ -104,12 +105,17 @@ LOG_LEVEL = os.getenv("WEBHOOK_LOG_LEVEL", "INFO").upper()
 def login_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
+        global CURRENT_SESSION_TOKEN
         if not session.get("logged_in"):
             next_url = request.path
             return redirect(url_for("login", next=next_url))
 
         now = time.time()
         last_seen = session.get("last_seen")
+        token = session.get("session_token")
+        if CURRENT_SESSION_TOKEN and token != CURRENT_SESSION_TOKEN:
+            session.clear()
+            return redirect(url_for("login"))
 
         # If we've been inactive for > 10 minutes, force logout
         if last_seen is not None and now - last_seen > 10 * 60:
@@ -194,6 +200,12 @@ def login():
             session["logged_in"] = True
             session.permanent = True  # uses PERMANENT_SESSION_LIFETIME
             session["last_seen"] = time.time()
+            # single session token
+            import uuid
+            token = uuid.uuid4().hex
+            session["session_token"] = token
+            global CURRENT_SESSION_TOKEN
+            CURRENT_SESSION_TOKEN = token
             next_url = request.args.get("next") or url_for("dashboard")
             return redirect(next_url)
 
@@ -206,11 +218,19 @@ def login():
 @app.route("/logout")
 @login_required
 def logout():
+    global CURRENT_SESSION_TOKEN
+    token = session.get("session_token")
+    if CURRENT_SESSION_TOKEN and token == CURRENT_SESSION_TOKEN:
+        CURRENT_SESSION_TOKEN = None
     session.clear()
     return redirect(url_for("login"))
 
 @app.route("/logout_silent", methods=["POST"])
 def logout_silent():
+    global CURRENT_SESSION_TOKEN
+    token = session.get("session_token")
+    if CURRENT_SESSION_TOKEN and token == CURRENT_SESSION_TOKEN:
+        CURRENT_SESSION_TOKEN = None
     # No redirect, just clear the session and return 204
     session.clear()
     return "", 204
