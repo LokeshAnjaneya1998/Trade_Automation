@@ -182,21 +182,7 @@
         <!-- Left column: controls + auth + logs -->
         <div class="card">
             <div class="stack">
-                {% if auth_url %}
-                <button type="button" class="btn btn-blue" onclick="window.open('{{ auth_url }}', '_blank');">
-                    🔗 Authentication link
-                </button>
-                {% else %}
-                <button type="button" class="btn btn-blue" disabled>
-                    🔗 Authentication link (not yet available)
-                </button>
-                {% endif %}
-
-                <button type="button" class="btn btn-blue" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">
-                    📜 Recent logs (full page)
-                </button>
-
-                <div class="logs-snippet" id="log-snippet">Loading last 10 log lines...</div>
+                
 
                 <form method="POST" action="{{ url_for('resume_trading') }}">
                     <input type="hidden" name="token" value="{{ admin_token }}">
@@ -218,6 +204,22 @@
                         ⟳ Restart bot
                     </button>
                 </form>
+
+                {% if auth_url %}
+                <button type="button" class="btn btn-blue" onclick="window.open('{{ auth_url }}', '_blank');">
+                    🔗 Authentication link
+                </button>
+                {% else %}
+                <button type="button" class="btn btn-blue" disabled>
+                    🔗 Authentication link (not yet available)
+                </button>
+                {% endif %}
+
+                <button type="button" class="btn btn-blue" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">
+                    📜 Recent logs (full page)
+                </button>
+
+                <div class="logs-snippet" id="log-snippet">Loading last 10 log lines...</div>
             </div>
         </div>
 
