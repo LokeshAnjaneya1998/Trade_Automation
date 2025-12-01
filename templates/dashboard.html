@@ -161,7 +161,6 @@
 <body>
 <div class="layout">
 
-    <!-- Top Bar -->
     <div class="top-bar">
         <div class="top-bar-left">
             <h1>Fyers Auto-Trading Control Panel</h1>
@@ -172,7 +171,6 @@
         </div>
     </div>
 
-    <!-- Status -->
     <div class="status-row">
         <span class="status-label">Trading status:</span>
         <span class="status-badge {% if status_text == 'ENABLED' %}status-enabled{% else %}status-paused{% endif %}">
@@ -182,29 +180,26 @@
     </div>
 
     <div class="grid">
-        <!-- Left column: controls + auth + logs -->
         <div class="card controls-card">
             <h2 style="margin-top:0;">Bot Controls</h2>
             <div class="stack">
-                
-
                 <form method="POST" action="{{ url_for('resume_trading') }}">
                     <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-green confirm-action" data-action="start-trading" data-message="Start trading? New webhooks will send orders to Fyers.">
+                    <button type="submit" class="btn btn-green">
                         ▶ Start trading
                     </button>
                 </form>
 
                 <form method="POST" action="{{ url_for('pause_trading') }}">
                     <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-red confirm-action" data-action="stop-trading" data-message="Stop trading? Incoming webhooks will be ignored (no orders sent).">
+                    <button type="submit" class="btn btn-red">
                         ⏸ Stop trading
                     </button>
                 </form>
 
                 <form method="POST" action="{{ url_for('restart_service') }}">
                     <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-blue confirm-action" data-action="restart-bot" data-message="Restart the bot process? The server will briefly go offline and come back.">
+                    <button type="submit" class="btn btn-blue">
                         ⟳ Restart bot
                     </button>
                 </form>
@@ -227,7 +222,6 @@
             </div>
         </div>
 
-        <!-- Right column: premarket -->
         <div class="card">
             <div class="section-header">
                 <div>
@@ -257,58 +251,7 @@
 
 </div>
 
-<!-- Confirmation Modal -->
-<div id="confirm-backdrop" class="modal-backdrop">
-    <div class="modal">
-        <h3 id="confirm-title">Confirm action</h3>
-        <p id="confirm-message"></p>
-        <div class="modal-buttons">
-            <button type="button" class="modal-btn modal-btn-no" id="confirm-no">No</button>
-            <button type="button" class="modal-btn modal-btn-yes" id="confirm-yes">Yes</button>
-        </div>
-    </div>
-</div>
-
 <script>
-    const backdrop = document.getElementById('confirm-backdrop');
-    const msgEl = document.getElementById('confirm-message');
-    const titleEl = document.getElementById('confirm-title');
-    const btnYes = document.getElementById('confirm-yes');
-    const btnNo = document.getElementById('confirm-no');
-    let pendingForm = null;
-
-    function openConfirm(form, message, title) {
-        pendingForm = form;
-        msgEl.textContent = message || "Are you sure?";
-        titleEl.textContent = title || "Confirm action";
-        backdrop.style.display = 'flex';
-    }
-
-    function closeConfirm() {
-        backdrop.style.display = 'none';
-        pendingForm = null;
-    }
-
-    btnNo.addEventListener('click', closeConfirm);
-    btnYes.addEventListener('click', function () {
-        if (pendingForm) pendingForm.submit();
-        closeConfirm();
-    });
-
-    document.querySelectorAll('.confirm-action').forEach(function (btn) {
-        btn.addEventListener('click', function (e) {
-            e.preventDefault();
-            const form = btn.closest('form');
-            const message = btn.getAttribute('data-message');
-            let title = "Confirm action";
-            const action = btn.getAttribute('data-action');
-            if (action === 'start-trading') title = "Start Trading";
-            else if (action === 'stop-trading') title = "Stop Trading";
-            else if (action === 'restart-bot') title = "Restart Bot";
-            openConfirm(form, message, title);
-        });
-    });
-
     async function loadPremarket() {
         const btn = document.getElementById("premarket-refresh-btn");
         if (btn) {
@@ -413,6 +356,7 @@
         if (refreshBtn) {
             refreshBtn.addEventListener("click", loadPremarket);
         }
+        setInterval(refreshLogSnippet, 5000);
     });
 </script>
 
