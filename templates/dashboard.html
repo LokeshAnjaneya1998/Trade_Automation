@@ -30,9 +30,9 @@
         a:hover { text-decoration: underline; }
 
         .layout {
-            max-width: 1200px;
+            max-width: 1080px;
             margin: 0 auto;
-            padding: 20px 20px 32px 20px;
+            padding: 16px 12px 24px 12px;
         }
 
         .top-bar {
@@ -62,8 +62,9 @@
 
         .grid {
             display: grid;
-            grid-template-columns: 320px 1fr;
-            gap: 16px;
+            grid-template-columns: 340px 1fr;
+            gap: 14px;
+            margin-bottom: 14px;
         }
 
         .card {
@@ -76,17 +77,13 @@
 
         .card h2 { margin: 0 0 10px 0; font-size: 1rem; }
 
-        .stack {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
+        .stack { display: flex; flex-direction: column; gap: 10px; }
 
         .btn {
             cursor: pointer;
             border-radius: 10px;
             border: 1px solid transparent;
-            padding: 10px 12px;
+            padding: 11px 12px;
             font-size: 0.95rem;
             font-weight: 600;
             display: inline-flex;
@@ -96,6 +93,7 @@
             background: #111827;
             color: var(--text-main);
             transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+            width: 100%;
         }
         .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35); }
         .btn-blue { background: var(--accent-soft); border-color: rgba(59, 130, 246, 0.8); color: #dbeafe; }
@@ -137,6 +135,20 @@
         .checkpoint-badge.WARN { background: rgba(234, 179, 8, 0.15); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.5); }
         .checkpoint-badge.FAIL { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.5); }
         .checkpoint-badge.INFO { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.5); }
+
+        .logs-snippet {
+            background: #0f172a;
+            border: 1px solid var(--border-subtle);
+            border-radius: 10px;
+            padding: 10px;
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+            font-size: 0.78rem;
+            line-height: 1.35;
+            color: #e5e7eb;
+            max-height: 220px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
 
         @media (max-width: 900px) {
             .grid { grid-template-columns: 1fr; }
@@ -181,8 +193,10 @@
                 {% endif %}
 
                 <button type="button" class="btn btn-blue" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">
-                    📜 Recent logs
+                    📜 Recent logs (full page)
                 </button>
+
+                <div class="logs-snippet" id="log-snippet">Loading last 10 log lines...</div>
 
                 <form method="POST" action="{{ url_for('resume_trading') }}">
                     <input type="hidden" name="token" value="{{ admin_token }}">
@@ -217,7 +231,7 @@
                     type="button"
                     class="btn btn-blue"
                     id="premarket-refresh-btn"
-                    style="white-space:nowrap;"
+                    style="width:auto; white-space:nowrap;"
                 >
                     ⟳ Refresh
                 </button>
@@ -315,8 +329,8 @@
                          <strong>Prev Range:</strong> ${nr.day_range_prev} pts</div>
                     <div><strong>Trend:</strong> ${nr.trend_regime}</div>
                     <div><strong>Volatility:</strong> ${nr.vol_regime}</div>
-                    <div><strong>Gap:</strong> ${nr.gap_points} pts (${nr.gap_multiple_atr} × ATR)
-                         – ${nr.gap_type}</div>
+                    <div><strong>Gap:</strong> ${nr.gap_points} pts (${nr.gap_multiple_atr} x ATR)
+                         - ${nr.gap_type}</div>
                     <div><strong>India VIX:</strong> ${s.india_vix}</div>
                     <div><strong>Global:</strong> S&P ${gs.spx_change}%,
                          Nasdaq ${gs.nasdaq_change}%, VIX ${gs.vix_change}%,
@@ -324,7 +338,7 @@
                     <div><strong>Global Mood:</strong> ${gs.risk_mood}</div>
                     <div><strong>OI:</strong> ${
                         oi
-                            ? `Spot ${oi.spot}, CE OI ±200: ${oi.ce_oi_near}, PE OI ±200: ${oi.pe_oi_near} (${oi.pressure})`
+                            ? `Spot ${oi.spot}, CE OI +/-200: ${oi.ce_oi_near}, PE OI +/-200: ${oi.pe_oi_near} (${oi.pressure})`
                             : "N/A"
                     }</div>
                 `;
@@ -373,8 +387,24 @@
         }
     }
 
+    async function refreshLogSnippet() {
+        const box = document.getElementById("log-snippet");
+        if (!box) return;
+        try {
+            const res = await fetch("{{ url_for('logs_only') }}");
+            const text = await res.text();
+            const lines = text.split(/\r?\n/).filter(Boolean);
+            const top = lines.slice(0, 10).join("\n");
+            box.textContent = top || "No logs yet.";
+        } catch (err) {
+            box.textContent = "Error loading logs: " + err;
+            console.error("Log snippet fetch failed:", err);
+        }
+    }
+
     document.addEventListener("DOMContentLoaded", function () {
         loadPremarket();
+        refreshLogSnippet();
         const refreshBtn = document.getElementById("premarket-refresh-btn");
         if (refreshBtn) {
             refreshBtn.addEventListener("click", loadPremarket);
