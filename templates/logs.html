@@ -38,7 +38,7 @@
     <div class="log-container">
         {% if lines %}
             {% for line in lines %}
-                <div class="log-line">{{ line }}</div>
+                <div class="log-line">{{ line|safe }}</div>
                 {% if not loop.last %}<div class="log-separator"></div>{% endif %}
             {% endfor %}
         {% else %}

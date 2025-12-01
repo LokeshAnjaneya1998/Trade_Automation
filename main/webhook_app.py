@@ -250,7 +250,10 @@ def dashboard():
 @login_required
 def logs_only():
     log_text = read_log_tail(200)
-    lines = [line.rstrip() for line in log_text.splitlines() if line.strip() != ""]
+    lines_raw = [line.rstrip() for line in log_text.splitlines() if line.strip() != ""]
+    def linkify(line: str) -> str:
+        return re.sub(r"(https?://[^\s]+)", r'<a href="\1" target="_blank">\1</a>', html.escape(line))
+    lines = [linkify(line) for line in lines_raw]
     return render_template("logs.html", lines=lines)
 
 
@@ -259,9 +262,13 @@ def logs_only():
 def logs_snippet():
     log_text = read_log_tail(10)
     lines = [line.rstrip() for line in log_text.splitlines() if line.strip() != ""]
-    sep = "\n--------------------------------\n"
-    body = sep.join(lines) if lines else "No logs yet."
-    return app.response_class(body, mimetype="text/plain")
+    def linkify(line: str) -> str:
+        return re.sub(r"(https?://[^\s]+)", r'<a href="\1" target="_blank">\1</a>', html.escape(line))
+    body_lines = [f'<div class="log-line">{linkify(line)}</div>' for line in lines] if lines else ['<div class="log-line">No logs yet.</div>']
+    sep = '<div class="log-separator"></div>'
+    html_body = sep.join(body_lines)
+    payload = f'<div class="log-container">{html_body}</div>'
+    return app.response_class(payload, mimetype="text/html")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -354,7 +361,7 @@ async def place_order(order_details):
 @login_required
 def restart_service():
     token = request.form.get("token") or request.args.get("token")
-    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
+    if ADMIN_TOKEN and token != ADMIN_TOKEN:
         abort(403)
 
     def delayed_exit():

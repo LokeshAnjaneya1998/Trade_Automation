@@ -149,7 +149,7 @@
             min-height: 260px;
             flex: 1;
             overflow-y: auto;
-            white-space: pre-wrap;
+            white-space: normal;
             width: 100%;
         }
 
@@ -398,11 +398,8 @@
         if (!box) return;
         try {
             const res = await fetch("{{ url_for('logs_snippet') }}");
-            const text = await res.text();
-            const lines = text.split(/\r?\n/).filter(Boolean);
-            const sep = "\n--------------------------------\n";
-            const top = lines.slice(0, 10).join(sep);
-            box.textContent = top || "No logs yet.";
+            const htmlSnippet = await res.text();
+            box.innerHTML = htmlSnippet || "No logs yet.";
         } catch (err) {
             box.textContent = "Error loading logs: " + err;
             console.error("Log snippet fetch failed:", err);
