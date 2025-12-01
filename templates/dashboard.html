@@ -15,9 +15,7 @@
             --text-muted: #9ca3af;
             --border-subtle: #1f2937;
         }
-
         * { box-sizing: border-box; }
-
         body {
             margin: 0;
             padding: 0;
@@ -25,142 +23,48 @@
             background: radial-gradient(circle at top left, #1f2937 0, #020617 50%);
             color: var(--text-main);
         }
-
         a { color: var(--accent); text-decoration: none; }
         a:hover { text-decoration: underline; }
-
-        .layout {
-            max-width: 1280px;
-            margin: 0 auto;
-            padding: 12px 10px 20px 10px;
-        }
-
-        .top-bar {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 14px;
-        }
-
+        .layout { max-width: 1280px; margin: 0 auto; padding: 12px 10px 20px 10px; }
+        .top-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
         .top-bar-left h1 { font-size: 1.6rem; margin: 0; }
         .top-bar-left span { font-size: 0.9rem; color: var(--text-muted); }
         .top-bar-right a { font-size: 0.9rem; color: var(--text-muted); }
         .top-bar-right a:hover { color: var(--accent); }
-
         .status-row { display: flex; align-items: center; margin-bottom: 18px; }
         .status-label { font-size: 0.9rem; color: var(--text-muted); margin-right: 8px; }
-        .status-badge {
-            display: inline-flex; align-items: center;
-            font-size: 0.8rem; padding: 4px 10px; border-radius: 999px;
-            background: rgba(148, 163, 184, 0.15); border: 1px solid rgba(148, 163, 184, 0.3);
-        }
+        .status-badge { display: inline-flex; align-items: center; font-size: 0.8rem; padding: 4px 10px; border-radius: 999px; background: rgba(148, 163, 184, 0.15); border: 1px solid rgba(148, 163, 184, 0.3); }
         .status-dot { width: 8px; height: 8px; border-radius: 999px; margin-right: 6px; }
         .status-enabled { background: rgba(34, 197, 94, 0.18); border-color: rgba(34, 197, 94, 0.4); }
         .status-enabled .status-dot { background: var(--success); }
         .status-paused { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.4); }
         .status-paused .status-dot { background: var(--danger); }
-
-        .grid {
-            display: grid;
-            grid-template-columns: 360px 1fr;
-            gap: 14px;
-            margin-bottom: 14px;
-        }
-
-        .card {
-            background: var(--card-bg);
-            border-radius: 14px;
-            border: 1px solid var(--border-subtle);
-            padding: 16px 18px 18px 18px;
-            box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45);
-        }
-
+        .grid { display: grid; grid-template-columns: 360px 1fr; gap: 14px; margin-bottom: 14px; }
+        .card { background: var(--card-bg); border-radius: 14px; border: 1px solid var(--border-subtle); padding: 16px 18px 18px 18px; box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45); }
         .card h2 { margin: 0 0 10px 0; font-size: 1rem; }
-
         .controls-card { display: flex; flex-direction: column; }
         .stack { display: flex; flex-direction: column; gap: 10px; flex: 1; }
-
-        .btn {
-            cursor: pointer;
-            border-radius: 10px;
-            border: 1px solid transparent;
-            padding: 11px 12px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            justify-content: center;
-            background: #111827;
-            color: var(--text-main);
-            transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
-            width: 100%;
-        }
+        .btn { cursor: pointer; border-radius: 10px; border: 1px solid transparent; padding: 11px 12px; font-size: 0.95rem; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; justify-content: center; background: #111827; color: var(--text-main); transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease; width: 100%; }
         .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35); }
         .btn-blue { background: var(--accent-soft); border-color: rgba(59, 130, 246, 0.8); color: #dbeafe; }
         .btn-blue:hover { background: rgba(59, 130, 246, 0.3); }
         .btn-green { background: rgba(34, 197, 94, 0.18); border-color: rgba(34, 197, 94, 0.6); color: #bbf7d0; }
         .btn-red { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.7); color: #fecaca; }
-
-        .section-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            margin-bottom: 8px;
-        }
-
-        .meta {
-            font-size: 0.9rem;
-            color: var(--text-muted);
-            margin-bottom: 10px;
-        }
-
-        .checkpoint-item, .suggestion-item {
-            padding: 8px 10px;
-            border-radius: 6px;
-            border: 1px solid rgba(148, 163, 184, 0.3);
-            background: rgba(15, 23, 42, 0.8);
-            font-size: 0.85rem;
-        }
-
+        .section-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+        .meta { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 10px; }
+        .checkpoint-item, .suggestion-item { padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(148, 163, 184, 0.3); background: rgba(15, 23, 42, 0.8); font-size: 0.85rem; }
         .checkpoint-title { font-weight: 600; margin-bottom: 2px; }
-        .checkpoint-badge {
-            display: inline-block;
-            font-size: 0.7rem;
-            padding: 2px 6px;
-            border-radius: 999px;
-            margin-left: 6px;
-        }
+        .checkpoint-badge { display: inline-block; font-size: 0.7rem; padding: 2px 6px; border-radius: 999px; margin-left: 6px; }
         .checkpoint-badge.PASS { background: rgba(34, 197, 94, 0.15); color: #22c55e; border: 1px solid rgba(34, 197, 94, 0.5); }
         .checkpoint-badge.WARN { background: rgba(234, 179, 8, 0.15); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.5); }
         .checkpoint-badge.FAIL { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.5); }
         .checkpoint-badge.INFO { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.5); }
-
-        .logs-snippet {
-            background: #0f172a;
-            border: 1px solid var(--border-subtle);
-            border-radius: 10px;
-            padding: 10px;
-            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-            font-size: 0.78rem;
-            line-height: 1.35;
-            color: #e5e7eb;
-            min-height: 260px;
-            flex: 1;
-            overflow-y: auto;
-            white-space: normal;
-            width: 100%;
-        }
-
-        @media (max-width: 900px) {
-            .grid { grid-template-columns: 1fr; }
-        }
+        .logs-snippet { background: #0f172a; border: 1px solid var(--border-subtle); border-radius: 10px; padding: 10px; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.78rem; line-height: 1.35; color: #e5e7eb; min-height: 260px; flex: 1; overflow-y: auto; white-space: normal; width: 100%; }
+        @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
     </style>
 </head>
 <body>
 <div class="layout">
-
     <div class="top-bar">
         <div class="top-bar-left">
             <h1>Fyers Auto-Trading Control Panel</h1>
@@ -185,190 +89,94 @@
             <div class="stack">
                 <form method="POST" action="{{ url_for('resume_trading') }}">
                     <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-green">
-                        ▶ Start trading
-                    </button>
+                    <button type="submit" class="btn btn-green">▶ Start trading</button>
                 </form>
-
                 <form method="POST" action="{{ url_for('pause_trading') }}">
                     <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-red">
-                        ⏸ Stop trading
-                    </button>
+                    <button type="submit" class="btn btn-red">⏸ Stop trading</button>
                 </form>
-
                 <form method="POST" action="{{ url_for('restart_service') }}">
                     <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-blue">
-                        ⟳ Restart bot
-                    </button>
+                    <button type="submit" class="btn btn-blue">⟳ Restart bot</button>
                 </form>
-
                 {% if auth_url %}
-                <button type="button" class="btn btn-blue" onclick="window.open('{{ auth_url }}', '_blank');">
-                    🔗 Authentication link
-                </button>
+                <button type="button" class="btn btn-blue" onclick="window.open('{{ auth_url }}', '_blank');">🔗 Authentication link</button>
                 {% else %}
-                <button type="button" class="btn btn-blue" disabled>
-                    🔗 Authentication link (not yet available)
-                </button>
+                <button type="button" class="btn btn-blue" disabled>🔗 Authentication link (not yet available)</button>
                 {% endif %}
-
-                <button type="button" class="btn btn-blue" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">
-                    📜 Recent logs (full page)
-                </button>
-
+                <button type="button" class="btn btn-blue" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">📜 Recent logs (full page)</button>
                 <div class="logs-snippet" id="log-snippet">Loading last 10 log lines...</div>
             </div>
         </div>
 
         <div class="card">
             <div class="section-header">
-                <div>
-                    <h2 style="margin:0;">Premarket ORB Checklist – NIFTY 50</h2>
-                </div>
-                <button
-                    type="button"
-                    class="btn btn-blue"
-                    id="premarket-refresh-btn"
-                    style="width:auto; white-space:nowrap;"
-                >
-                    ⟳ Refresh
-                </button>
+                <div><h2 style="margin:0;">Premarket ORB Checklist – NIFTY 50</h2></div>
+                <button type="button" class="btn btn-blue" id="premarket-refresh-btn" style="width:auto; white-space:nowrap;">⟳ Refresh</button>
             </div>
-
-            <div id="premarket-meta" class="meta">
-                Loading premarket data...
-            </div>
-
+            <div id="premarket-meta" class="meta">Loading premarket data...</div>
             <h3 style="margin: 10px 0 6px 0;">Checkpoints</h3>
             <div id="premarket-checkpoints" style="display:flex; flex-direction:column; gap:6px;"></div>
-
             <h3 style="margin: 14px 0 6px 0;">Suggestions</h3>
             <div id="premarket-suggestions" style="display:flex; flex-direction:column; gap:6px;"></div>
         </div>
     </div>
-
 </div>
 
 <script>
-    // Attempt to logout when the tab/window is closed or hidden
-    function sendSilentLogout() {
-        try {
-            var url = "{{ url_for('logout_silent') }}";
-            var data = new Blob([], { type: 'application/x-www-form-urlencoded' });
-            navigator.sendBeacon(url, data);
-        } catch (e) {
-            var xhr = new XMLHttpRequest();
-            xhr.open("POST", "{{ url_for('logout_silent') }}", false);
-            xhr.send(null);
-        }
-    }
-
-    window.addEventListener("beforeunload", sendSilentLogout);
-    window.addEventListener("pagehide", sendSilentLogout);
-    document.addEventListener("visibilitychange", function() {
-        if (document.visibilityState === "hidden") {
-            sendSilentLogout();
-        }
-    });
-
-    let skipLogout = false;
-
-    function sendSilentLogout() {
-        if (skipLogout) return;
-        try {
-            var url = "{{ url_for('logout_silent') }}";
-            var data = new Blob([], { type: 'application/x-www-form-urlencoded' });
-            navigator.sendBeacon(url, data);
-        } catch (e) {
-            var xhr = new XMLHttpRequest();
-            xhr.open("POST", "{{ url_for('logout_silent') }}", false);
-            xhr.send(null);
-        }
-    }
-
     async function loadPremarket() {
         const btn = document.getElementById("premarket-refresh-btn");
-        if (btn) {
-            btn.disabled = true;
-            btn.textContent = "Refreshing...";
-        }
+        if (btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
         try {
             const res = await fetch("{{ url_for('premarket_summary') }}");
             const data = await res.json();
-
             const metaEl = document.getElementById("premarket-meta");
             const cpEl = document.getElementById("premarket-checkpoints");
             const sgEl = document.getElementById("premarket-suggestions");
-
             const s = data.summary;
             const nr = s.nifty_regime;
             const gs = s.global_snapshot;
             const oi = s.oi_pressure;
-
             if (metaEl) {
                 metaEl.innerHTML = `
                     <div><strong>As of (IST):</strong> ${s.as_of_ist}</div>
-                    <div><strong>ATR(20):</strong> ${nr.atr_20} pts |
-                         <strong>Prev Range:</strong> ${nr.day_range_prev} pts</div>
+                    <div><strong>ATR(20):</strong> ${nr.atr_20} pts | <strong>Prev Range:</strong> ${nr.day_range_prev} pts</div>
                     <div><strong>Trend:</strong> ${nr.trend_regime}</div>
                     <div><strong>Volatility:</strong> ${nr.vol_regime}</div>
-                    <div><strong>Gap:</strong> ${nr.gap_points} pts (${nr.gap_multiple_atr} x ATR)
-                         - ${nr.gap_type}</div>
+                    <div><strong>Gap:</strong> ${nr.gap_points} pts (${nr.gap_multiple_atr} x ATR) - ${nr.gap_type}</div>
                     <div><strong>India VIX:</strong> ${s.india_vix}</div>
-                    <div><strong>Global:</strong> S&P ${gs.spx_change}%,
-                         Nasdaq ${gs.nasdaq_change}%, VIX ${gs.vix_change}%,
-                         Crude ${gs.crude_change}%</div>
+                    <div><strong>Global:</strong> S&P ${gs.spx_change}%, Nasdaq ${gs.nasdaq_change}%, VIX ${gs.vix_change}%, Crude ${gs.crude_change}%</div>
                     <div><strong>Global Mood:</strong> ${gs.risk_mood}</div>
-                    <div><strong>OI:</strong> ${
-                        oi
-                            ? `Spot ${oi.spot}, CE OI +/-200: ${oi.ce_oi_near}, PE OI +/-200: ${oi.pe_oi_near} (${oi.pressure})`
-                            : "N/A"
-                    }</div>
+                    <div><strong>OI:</strong> ${ oi ? `Spot ${oi.spot}, CE OI +/-200: ${oi.ce_oi_near}, PE OI +/-200: ${oi.pe_oi_near} (${oi.pressure})` : "N/A" }</div>
                 `;
             }
-
             if (cpEl) {
                 cpEl.innerHTML = "";
                 data.checkpoints.forEach(cp => {
                     const div = document.createElement("div");
                     div.className = "checkpoint-item";
                     div.innerHTML = `
-                        <div class="checkpoint-title">
-                            ${cp.title}
-                            <span class="checkpoint-badge ${cp.status}">${cp.status}</span>
-                        </div>
+                        <div class="checkpoint-title">${cp.title}<span class="checkpoint-badge ${cp.status}">${cp.status}</span></div>
                         <div>${cp.message}</div>
                     `;
                     cpEl.appendChild(div);
                 });
             }
-
             if (sgEl) {
                 sgEl.innerHTML = "";
                 data.suggestions.forEach(sg => {
                     const div = document.createElement("div");
                     div.className = "suggestion-item";
-                    div.innerHTML = `
-                        <div class="checkpoint-title">${sg.title}</div>
-                        <div>${sg.detail}</div>
-                    `;
+                    div.innerHTML = `<div class="checkpoint-title">${sg.title}</div><div>${sg.detail}</div>`;
                     sgEl.appendChild(div);
                 });
             }
-
         } catch (err) {
             const metaEl = document.getElementById("premarket-meta");
-            if (metaEl) {
-                metaEl.textContent = "Error loading premarket data: " + err;
-            }
+            if (metaEl) metaEl.textContent = "Error loading premarket data: " + err;
             console.error("Premarket fetch failed:", err);
         } finally {
-            if (btn) {
-                btn.disabled = false;
-                btn.textContent = "⟳ Refresh";
-            }
+            if (btn) { btn.disabled = false; btn.textContent = "⟳ Refresh"; }
         }
     }
 
@@ -386,39 +194,12 @@
     }
 
     document.addEventListener("DOMContentLoaded", function () {
-        // mark control forms to skip logout beacon during internal submits
-        document.querySelectorAll('form').forEach(function (form) {
-            form.addEventListener('submit', function () {
-                skipLogout = true;
-                setTimeout(() => { skipLogout = false; }, 2000);
-            });
-        });
-
-        window.addEventListener("beforeunload", sendSilentLogout);
-
         loadPremarket();
         refreshLogSnippet();
         const refreshBtn = document.getElementById("premarket-refresh-btn");
-        if (refreshBtn) {
-            refreshBtn.addEventListener("click", loadPremarket);
-        }
+        if (refreshBtn) { refreshBtn.addEventListener("click", loadPremarket); }
         setInterval(refreshLogSnippet, 5000);
     });
 </script>
-
-
 </body>
 </html>
-<script>
-    // Log out silently when tab/window is closed
-    window.addEventListener("beforeunload", function () {
-        try {
-            var url = "{{ url_for('logout_silent') }}";
-            var data = new Blob([], { type: 'application/x-www-form-urlencoded' });
-            navigator.sendBeacon(url, data);
-        } catch (e) {
-            var xhr = new XMLHttpRequest();
-            xhr.open("POST", "{{ url_for('logout_silent') }}", false);
-            xhr.send(null);
-        }
-    });
