@@ -38,12 +38,17 @@ class PremarketAnalyzer:
     # ---------- Core summary ----------
 
     def build_summary(self) -> PremarketSummary:
+        logger.info("PremarketAnalyzer: starting build_summary")
         mds = self._get_market_data_service()
         as_of_ist = dt.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S %Z")
         nifty_regime = mds.classify_nifty_regime()
+        logger.debug(f"PremarketAnalyzer: nifty_regime={nifty_regime}")
         india_vix = mds.fetch_india_vix()
+        logger.debug(f"PremarketAnalyzer: india_vix={india_vix}")
         global_snapshot = mds.fetch_global_snapshot()
+        logger.debug(f"PremarketAnalyzer: global_snapshot={global_snapshot}")
         oi_pressure = self.ocs.compute_oi_pressure()
+        logger.debug(f"PremarketAnalyzer: oi_pressure={oi_pressure}")
 
         return PremarketSummary(
             as_of_ist=as_of_ist,
@@ -267,10 +272,14 @@ class PremarketAnalyzer:
     # ---------- Public API ----------
 
     def analyze(self) -> PremarketSummaryResponse:
+        logger.info("PremarketAnalyzer: running analyze()")
         summary = self.build_summary()
         checkpoints = self._build_checkpoints(summary)
         suggestions = self._build_suggestions(summary)
         summary_dict = self._summary_to_dict(summary)
+        logger.debug(f"PremarketAnalyzer: summary_dict={summary_dict}")
+        logger.debug(f"PremarketAnalyzer: checkpoints={checkpoints}")
+        logger.debug(f"PremarketAnalyzer: suggestions={suggestions}")
 
         return PremarketSummaryResponse(
             summary=summary_dict,

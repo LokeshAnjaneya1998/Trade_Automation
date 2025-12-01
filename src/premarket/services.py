@@ -3,6 +3,7 @@
 import datetime as dt
 from typing import Dict, Optional
 
+import logging
 import pandas as pd
 import pytz
 import requests
@@ -15,6 +16,7 @@ from .models import (
 )
 
 IST = pytz.timezone("Asia/Kolkata")
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -101,6 +103,7 @@ class FyersMarketDataService:
             raise RuntimeError(f"Error fetching history for {symbol}: {resp}")
 
         df = self._to_df_from_history(resp)
+        logger.info(f"Fetched {len(df)} daily candles for {symbol}")
         return df.tail(days)
 
     def _fetch_ltp(self, symbol: str) -> float:
@@ -164,6 +167,11 @@ class FyersMarketDataService:
         else:
             gap_type = "Large gap (>1x ATR)"
 
+        logger.info(
+            f"NIFTY regime: atr_20={atr_20:.2f}, prev_range={prev_range:.2f}, "
+            f"vol='{vol}', trend='{trend}', gap_points={gap_points:.2f}, gap_mult={gap_mult:.2f}, gap_type='{gap_type}'"
+        )
+
         return NiftyRegime(
             atr_20=self._nice(atr_20),
             day_range_prev=self._nice(prev_range),
@@ -179,6 +187,7 @@ class FyersMarketDataService:
         Fyers does NOT provide global markets.
         So we return neutral baseline.
         """
+        logger.info("Global snapshot using neutral placeholders (Fyers API does not provide globals)")
         return GlobalSnapshot(
             spx_change=0.0,
             nasdaq_change=0.0,
@@ -221,10 +230,12 @@ class OptionChainService:
         try:
             data = self._fetch_raw()
         except Exception:
+            logger.warning("Option chain fetch failed; returning None")
             return None
 
         underlying = data.get("records", {}).get("underlyingValue")
         if not underlying:
+            logger.warning("Option chain missing underlying value; returning None")
             return None
 
         underlying = float(underlying)
@@ -251,6 +262,10 @@ class OptionChainService:
             skew = "PE-heavy (bullish skew)"
         else:
             skew = "Balanced OI"
+
+        logger.info(
+            f"OI pressure: spot={underlying}, ce_oi_near={ce_oi}, pe_oi_near={pe_oi}, pressure={skew}"
+        )
 
         return OIPressure(
             spot=underlying,
