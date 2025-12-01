@@ -155,7 +155,8 @@ def make_links(text: str) -> str:
 
 
 def get_latest_auth_url(log_text: str) -> str | None:
-    for line in reversed(log_text.splitlines()):
+    # log_text is already newest-first; scan in order and return first match
+    for line in log_text.splitlines():
         if "Authorization URL:" in line:
             return line.split("Authorization URL:")[-1].strip()
     return None
