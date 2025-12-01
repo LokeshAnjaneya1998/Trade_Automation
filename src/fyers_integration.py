@@ -14,6 +14,11 @@ class FyersIntegration:
         self.config_manager = ConfigManager()
         self.config = self.config_manager.config
 
+    def refresh_config(self) -> None:
+        """Reload config from disk so new tokens are picked up by other instances."""
+        self.config_manager = ConfigManager()
+        self.config = self.config_manager.config
+
     def _build_session(self) -> fyersModel.SessionModel:
         missing = [
             name
@@ -68,6 +73,8 @@ class FyersIntegration:
             logger.error(f"Error fetching access token. Response: {response}")
 
     def get_fyers_instance(self) -> fyersModel.FyersModel:
+        # Reload config each time to pick up fresh access_token saved by other code paths.
+        self.refresh_config()
         if not self.config.access_token:
             raise ValueError("Access token is missing. Authenticate first.")
 

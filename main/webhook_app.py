@@ -1,12 +1,14 @@
 import logging
 import asyncio
 import os
+import sys
 import time
 import threading
 import re
 from pathlib import Path
 from functools import wraps
 from logging.handlers import RotatingFileHandler
+
 from src.premarket import PremarketAnalyzer
 
 
@@ -394,6 +396,14 @@ def premarket_summary():
     """
     try:
         data = premarket_analyzer.analyze_as_dict()
+    except ValueError as exc:
+        # Common case: Fyers access token missing/not generated yet
+        logger.error(f"Premarket analysis blocked: {exc}")
+        return jsonify({
+            "error": "fyers_auth_required",
+            "detail": str(exc),
+            "action": "Authenticate with Fyers to generate an access token, then retry."
+        }), 428
     except Exception as exc:
         logger.error(f"Premarket analysis failed: {exc}")
         return jsonify({"error": "Premarket analysis failed", "detail": str(exc)}), 503
