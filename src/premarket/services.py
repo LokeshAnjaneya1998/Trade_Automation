@@ -233,6 +233,7 @@ class FyersMarketDataService:
                 logger.info(f"Global SPX change% from {self.spx_symbol}: {spx_change}")
             except Exception as e:
                 logger.warning(f"Failed to fetch SPX change from {self.spx_symbol}: {e}")
+                logger.info(f"Failed to fetch SPX change from {self.spx_symbol}: {e}")
 
         if self.nasdaq_symbol:
             try:
@@ -240,6 +241,7 @@ class FyersMarketDataService:
                 logger.info(f"Global NASDAQ change% from {self.nasdaq_symbol}: {nasdaq_change}")
             except Exception as e:
                 logger.warning(f"Failed to fetch NASDAQ change from {self.nasdaq_symbol}: {e}")
+                logger.info(f"Failed to fetch NASDAQ change from {self.nasdaq_symbol}: {e}")
 
         if self.global_vix_symbol:
             try:
@@ -247,6 +249,7 @@ class FyersMarketDataService:
                 logger.info(f"Global VIX change% from {self.global_vix_symbol}: {vix_change}")
             except Exception as e:
                 logger.warning(f"Failed to fetch VIX change from {self.global_vix_symbol}: {e}")
+                logger.info(f"Failed to fetch VIX change from {self.global_vix_symbol}: {e}")
 
         if self.crude_symbol:
             try:
@@ -254,6 +257,7 @@ class FyersMarketDataService:
                 logger.info(f"Crude change% from {self.crude_symbol}: {crude_change}")
             except Exception as e:
                 logger.warning(f"Failed to fetch Crude change from {self.crude_symbol}: {e}")
+                logger.info(f"Failed to fetch Crude change from {self.crude_symbol}: {e}")
 
         # Simple risk mood heuristic
         if spx_change < 0 and nasdaq_change < 0 and vix_change > 0:
