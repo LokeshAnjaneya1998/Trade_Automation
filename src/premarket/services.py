@@ -32,13 +32,26 @@ class FyersMarketDataService:
     - LTP for NIFTY (for gap analysis)
     """
 
-    def __init__(self, fyers_client: fyersModel.FyersModel):
+    def __init__(
+        self,
+        fyers_client: fyersModel.FyersModel,
+        spx_symbol: Optional[str] = None,
+        nasdaq_symbol: Optional[str] = None,
+        vix_symbol: Optional[str] = None,
+        crude_symbol: Optional[str] = None,
+    ):
         self.fyers = fyers_client
         self._ist = IST
 
         # Adjust these if your symbols differ in Fyers
         self.nifty_symbol = "NSE:NIFTY50-INDEX"
         self.vix_symbol = "NSE:INDIAVIX-INDEX"
+
+        # Optional global symbols (provide actual tickers available in your Fyers account)
+        self.spx_symbol = spx_symbol
+        self.nasdaq_symbol = nasdaq_symbol
+        self.global_vix_symbol = vix_symbol
+        self.crude_symbol = crude_symbol
 
     # ---------- Helpers ----------
 
@@ -121,6 +134,28 @@ class FyersMarketDataService:
 
         return float(v["lp"])
 
+    def _fetch_quote_change_pct(self, symbol: str) -> float:
+        """Fetch percentage change for a symbol if available."""
+        resp = self.fyers.quotes({"symbols": symbol})
+        if resp.get("s") != "ok":
+            raise RuntimeError(f"Error fetching quotes for {symbol}: {resp}")
+
+        data = resp.get("d", [])
+        if not data:
+            raise RuntimeError(f"No quote data for {symbol}")
+
+        v = data[0].get("v", {})
+        if "chp" in v:
+            return float(v["chp"])
+
+        # Fallback: compute from last price and previous close if present
+        lp = v.get("lp")
+        prev_close = v.get("prev_close") or v.get("prevClose")
+        if lp is not None and prev_close not in (None, 0):
+            return (float(lp) - float(prev_close)) / float(prev_close) * 100.0
+
+        raise RuntimeError(f"No change% data for {symbol}: {v}")
+
     # ---------- Public functions ----------
 
     def fetch_india_vix(self) -> float:
@@ -184,16 +219,56 @@ class FyersMarketDataService:
 
     def fetch_global_snapshot(self) -> GlobalSnapshot:
         """
-        Fyers does NOT provide global markets.
-        So we return neutral baseline.
+        Attempt to pull high-level global metrics if symbols are provided;
+        otherwise return neutral baseline.
         """
-        logger.info("Global snapshot using neutral placeholders (Fyers API does not provide globals)")
+        spx_change = 0.0
+        nasdaq_change = 0.0
+        vix_change = 0.0
+        crude_change = 0.0
+
+        if self.spx_symbol:
+            try:
+                spx_change = self._fetch_quote_change_pct(self.spx_symbol)
+                logger.info(f"Global SPX change% from {self.spx_symbol}: {spx_change}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch SPX change from {self.spx_symbol}: {e}")
+
+        if self.nasdaq_symbol:
+            try:
+                nasdaq_change = self._fetch_quote_change_pct(self.nasdaq_symbol)
+                logger.info(f"Global NASDAQ change% from {self.nasdaq_symbol}: {nasdaq_change}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch NASDAQ change from {self.nasdaq_symbol}: {e}")
+
+        if self.global_vix_symbol:
+            try:
+                vix_change = self._fetch_quote_change_pct(self.global_vix_symbol)
+                logger.info(f"Global VIX change% from {self.global_vix_symbol}: {vix_change}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch VIX change from {self.global_vix_symbol}: {e}")
+
+        if self.crude_symbol:
+            try:
+                crude_change = self._fetch_quote_change_pct(self.crude_symbol)
+                logger.info(f"Crude change% from {self.crude_symbol}: {crude_change}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch Crude change from {self.crude_symbol}: {e}")
+
+        # Simple risk mood heuristic
+        if spx_change < 0 and nasdaq_change < 0 and vix_change > 0:
+            risk_mood = "Risk-Off"
+        elif spx_change > 0 and nasdaq_change > 0 and vix_change <= 0:
+            risk_mood = "Risk-On"
+        else:
+            risk_mood = "Mixed / Neutral"
+
         return GlobalSnapshot(
-            spx_change=0.0,
-            nasdaq_change=0.0,
-            vix_change=0.0,
-            crude_change=0.0,
-            risk_mood="Mixed / Neutral",
+            spx_change=spx_change,
+            nasdaq_change=nasdaq_change,
+            vix_change=vix_change,
+            crude_change=crude_change,
+            risk_mood=risk_mood,
         )
 
 
