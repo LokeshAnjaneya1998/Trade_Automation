@@ -396,6 +396,7 @@ def premarket_summary():
     """
     try:
         data = premarket_analyzer.analyze_as_dict()
+        logging.info(f"data is generated : {data}")
     except ValueError as exc:
         # Common case: Fyers access token missing/not generated yet
         logger.error(f"Premarket analysis blocked: {exc}")
