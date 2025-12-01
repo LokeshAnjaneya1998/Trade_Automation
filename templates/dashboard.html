@@ -87,24 +87,25 @@
         <div class="card controls-card">
             <h2 style="margin-top:0;">Bot Controls</h2>
             <div class="stack">
-                <form method="POST" action="{{ url_for('resume_trading') }}">
-                    <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-green">▶ Start trading</button>
-                </form>
+                
                 <form method="POST" action="{{ url_for('pause_trading') }}">
                     <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-red">⏸ Stop trading</button>
+                    <button type="submit" class="btn btn-red">⏸ Pause trading</button>
+                </form>
+                <form method="POST" action="{{ url_for('resume_trading') }}">
+                    <input type="hidden" name="token" value="{{ admin_token }}">
+                    <button type="submit" class="btn btn-green">▶ Resume trading</button>
                 </form>
                 <form method="POST" action="{{ url_for('restart_service') }}">
                     <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-blue">⟳ Restart bot</button>
+                    <button type="submit" class="btn btn-white">⟳ Restart bot</button>
                 </form>
                 {% if auth_url %}
                 <button type="button" class="btn btn-blue" onclick="window.open('{{ auth_url }}', '_blank');">🔗 Authentication link</button>
                 {% else %}
                 <button type="button" class="btn btn-blue" disabled>🔗 Authentication link (not yet available)</button>
                 {% endif %}
-                <button type="button" class="btn btn-blue" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">📜 Recent logs (full page)</button>
+                <button type="button" class="btn btn-Yellow" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">📜 Recent logs (full page)</button>
                 <div class="logs-snippet" id="log-snippet">Loading last 10 log lines...</div>
             </div>
         </div>
