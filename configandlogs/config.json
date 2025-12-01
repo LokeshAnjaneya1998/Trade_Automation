@@ -1,11 +1,11 @@
 {
-    "client_id": "EF1RRD52BU-100",
+    "client_id": "",
     "redirect_uri": "https://autotradingindialokesh.trade/capture_auth_code",
-    "secret_key": "DSPFOB3FKL",
+    "secret_key": "",
     "auth_code": "",
     "access_token": "token",
     "web_login": {
-    "username": "LokeshTrading",
-    "password": "LoIn2047@912"
+    "username": "",
+    "password": ""
   }
 }
