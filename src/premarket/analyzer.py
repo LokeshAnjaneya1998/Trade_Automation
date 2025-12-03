@@ -45,8 +45,6 @@ class PremarketAnalyzer:
         logger.debug(f"PremarketAnalyzer: nifty_regime={nifty_regime}")
         india_vix = mds.fetch_india_vix()
         logger.debug(f"PremarketAnalyzer: india_vix={india_vix}")
-        global_snapshot = mds.fetch_global_snapshot()
-        logger.debug(f"PremarketAnalyzer: global_snapshot={global_snapshot}")
         oi_pressure = self.ocs.compute_oi_pressure()
         logger.debug(f"PremarketAnalyzer: oi_pressure={oi_pressure}")
 
@@ -54,13 +52,12 @@ class PremarketAnalyzer:
             as_of_ist=as_of_ist,
             nifty_regime=nifty_regime,
             india_vix=india_vix,
-            global_snapshot=global_snapshot,
             oi_pressure=oi_pressure,
+            global_snapshot=None,
         )
 
     def _summary_to_dict(self, summary: PremarketSummary) -> Dict[str, Any]:
         nr = summary.nifty_regime
-        gs = summary.global_snapshot
         oi = summary.oi_pressure
 
         base = {
@@ -75,13 +72,7 @@ class PremarketAnalyzer:
                 "gap_type": nr.gap_type,
             },
             "india_vix": summary.india_vix,
-            "global_snapshot": {
-                "spx_change": gs.spx_change,
-                "nasdaq_change": gs.nasdaq_change,
-                "vix_change": gs.vix_change,
-                "crude_change": gs.crude_change,
-                "risk_mood": gs.risk_mood,
-            },
+            "global_snapshot": None,
             "oi_pressure": None,
         }
 
@@ -99,7 +90,6 @@ class PremarketAnalyzer:
 
     def _build_checkpoints(self, summary: PremarketSummary) -> List[Checkpoint]:
         nr = summary.nifty_regime
-        gs = summary.global_snapshot
         oi = summary.oi_pressure
 
         checkpoints: List[Checkpoint] = []
@@ -192,33 +182,12 @@ class PremarketAnalyzer:
                 message="Unable to fetch OI. Do NOT rely only on ORB; confirm with price action."
             ))
 
-        # Global mood
-        if "Risk-On" in gs.risk_mood:
-            checkpoints.append(Checkpoint(
-                title="Global Risk Mood",
-                status="PASS",
-                message=f"{gs.risk_mood}. Trend day more likely."
-            ))
-        elif "Risk-Off" in gs.risk_mood:
-            checkpoints.append(Checkpoint(
-                title="Global Risk Mood",
-                status="WARN",
-                message=f"{gs.risk_mood}. Spikes/fakeouts likely; tighten risk."
-            ))
-        else:
-            checkpoints.append(Checkpoint(
-                title="Global Risk Mood",
-                status="INFO",
-                message=f"{gs.risk_mood}. No clear push from global markets."
-            ))
-
         return checkpoints
 
     # ---------- Suggestions ----------
 
     def _build_suggestions(self, summary: PremarketSummary) -> List[Suggestion]:
         nr = summary.nifty_regime
-        gs = summary.global_snapshot
         oi = summary.oi_pressure
 
         suggestions: List[Suggestion] = []
@@ -258,13 +227,6 @@ class PremarketAnalyzer:
             suggestions.append(Suggestion(
                 title="Gap Handling",
                 detail="Large gap day: turn OFF first 5m ORB entries. Only enable trades after a retest."
-            ))
-
-        # Global risk
-        if "Risk-Off" in gs.risk_mood:
-            suggestions.append(Suggestion(
-                title="Risk Management",
-                detail="Risk-off globally: consider cutting size and tightening daily loss limits."
             ))
 
         return suggestions

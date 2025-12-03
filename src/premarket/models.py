@@ -37,8 +37,8 @@ class PremarketSummary:
     as_of_ist: str
     nifty_regime: NiftyRegime
     india_vix: float
-    global_snapshot: GlobalSnapshot
     oi_pressure: Optional[OIPressure]
+    global_snapshot: Optional[GlobalSnapshot] = None
 
 
 @dataclass
