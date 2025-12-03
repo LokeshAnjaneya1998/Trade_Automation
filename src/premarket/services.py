@@ -10,7 +10,6 @@ import requests
 from fyers_apiv3 import fyersModel
 
 from .models import (
-    GlobalSnapshot,
     NiftyRegime,
     OIPressure,
 )
@@ -32,26 +31,13 @@ class FyersMarketDataService:
     - LTP for NIFTY (for gap analysis)
     """
 
-    def __init__(
-        self,
-        fyers_client: fyersModel.FyersModel,
-        spx_symbol: Optional[str] = None,
-        nasdaq_symbol: Optional[str] = None,
-        vix_symbol: Optional[str] = None,
-        crude_symbol: Optional[str] = None,
-    ):
+    def __init__(self, fyers_client: fyersModel.FyersModel):
         self.fyers = fyers_client
         self._ist = IST
 
         # Adjust these if your symbols differ in Fyers
         self.nifty_symbol = "NSE:NIFTY50-INDEX"
         self.vix_symbol = "NSE:INDIAVIX-INDEX"
-
-        # Optional global symbols (provide actual tickers available in your Fyers account)
-        self.spx_symbol = spx_symbol
-        self.nasdaq_symbol = nasdaq_symbol
-        self.global_vix_symbol = vix_symbol
-        self.crude_symbol = crude_symbol
 
     # ---------- Helpers ----------
 
@@ -134,28 +120,6 @@ class FyersMarketDataService:
 
         return float(v["lp"])
 
-    def _fetch_quote_change_pct(self, symbol: str) -> float:
-        """Fetch percentage change for a symbol if available."""
-        resp = self.fyers.quotes({"symbols": symbol})
-        if resp.get("s") != "ok":
-            raise RuntimeError(f"Error fetching quotes for {symbol}: {resp}")
-
-        data = resp.get("d", [])
-        if not data:
-            raise RuntimeError(f"No quote data for {symbol}")
-
-        v = data[0].get("v", {})
-        if "chp" in v:
-            return float(v["chp"])
-
-        # Fallback: compute from last price and previous close if present
-        lp = v.get("lp")
-        prev_close = v.get("prev_close") or v.get("prevClose")
-        if lp is not None and prev_close not in (None, 0):
-            return (float(lp) - float(prev_close)) / float(prev_close) * 100.0
-
-        raise RuntimeError(f"No change% data for {symbol}: {v}")
-
     # ---------- Public functions ----------
 
     def fetch_india_vix(self) -> float:
@@ -216,18 +180,6 @@ class FyersMarketDataService:
             gap_multiple_atr=self._nice(gap_mult),
             gap_type=gap_type,
         )
-
-    def fetch_global_snapshot(self) -> GlobalSnapshot:
-        """Global snapshot disabled; return neutral baseline."""
-        logger.info("Global snapshot disabled; returning neutral baseline.")
-        return GlobalSnapshot(
-            spx_change=0.0,
-            nasdaq_change=0.0,
-            vix_change=0.0,
-            crude_change=0.0,
-            risk_mood="Mixed / Neutral",
-        )
-
 
 # ============================================================
 # 2) Option Chain Service (NSE API)
