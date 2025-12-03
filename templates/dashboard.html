@@ -148,6 +148,12 @@
         try {
             const res = await fetch("{{ url_for('premarket_summary') }}");
             const data = await res.json();
+            if (!res.ok || !data.summary) {
+                const metaEl = document.getElementById("premarket-meta");
+                const detail = data.error || data.detail || res.statusText || "Unknown error";
+                if (metaEl) metaEl.textContent = "Error loading premarket data: " + detail;
+                return;
+            }
             const metaEl = document.getElementById("premarket-meta");
             const cpEl = document.getElementById("premarket-checkpoints");
             const sgEl = document.getElementById("premarket-suggestions");
