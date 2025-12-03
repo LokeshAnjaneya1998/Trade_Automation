@@ -59,5 +59,3 @@ class PremarketSummaryResponse:
     summary: Dict[str, Any]
     checkpoints: List[Checkpoint]
     suggestions: List[Suggestion]
-
-    ### debug
