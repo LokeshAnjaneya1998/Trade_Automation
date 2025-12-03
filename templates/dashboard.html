@@ -159,7 +159,6 @@
             const sgEl = document.getElementById("premarket-suggestions");
             const s = data.summary;
             const nr = s.nifty_regime;
-            const gs = s.global_snapshot;
             const oi = s.oi_pressure;
             if (metaEl) {
                 metaEl.innerHTML = `
@@ -169,8 +168,6 @@
                     <div><strong>Volatility:</strong> ${nr.vol_regime}</div>
                     <div><strong>Gap:</strong> ${nr.gap_points} pts (${nr.gap_multiple_atr} x ATR) - ${nr.gap_type}</div>
                     <div><strong>India VIX:</strong> ${s.india_vix}</div>
-                    <div><strong>Global:</strong> S&P ${gs.spx_change}%, Nasdaq ${gs.nasdaq_change}%, VIX ${gs.vix_change}%, Crude ${gs.crude_change}%</div>
-                    <div><strong>Global Mood:</strong> ${gs.risk_mood}</div>
                     <div><strong>OI:</strong> ${ oi ? `Spot ${oi.spot}, CE OI +/-200: ${oi.ce_oi_near}, PE OI +/-200: ${oi.pe_oi_near} (${oi.pressure})` : "N/A" }</div>
                 `;
             }
