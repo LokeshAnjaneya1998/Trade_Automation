@@ -460,8 +460,8 @@ def webhook():
         elif side == "sell":
             order_details["side"] = -1
 
-        if symbol == "NSE:NIFTYBANK-INDEX":
-            order_details["side"] = 1
+        #if symbol == "NSE:NIFTYBANK-INDEX":
+            #order_details["side"] = 1
 
         logging.info(f"[LEGACY] Order details: {order_details}")
         asyncio.run(place_order(order_details))
