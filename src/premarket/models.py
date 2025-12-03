@@ -4,13 +4,6 @@ from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 
 
-@dataclass
-class GlobalSnapshot:
-    spx_change: float
-    nasdaq_change: float
-    vix_change: float
-    crude_change: float
-    risk_mood: str
 
 
 @dataclass
@@ -37,7 +30,6 @@ class PremarketSummary:
     as_of_ist: str
     nifty_regime: NiftyRegime
     india_vix: float
-    global_snapshot: GlobalSnapshot
     oi_pressure: Optional[OIPressure]
 
 
