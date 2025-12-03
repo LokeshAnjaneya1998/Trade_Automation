@@ -1,6 +1,6 @@
 import datetime as dt
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import pytz
 
@@ -26,14 +26,12 @@ class PremarketAnalyzer:
     def __init__(self, symbol: str = "NIFTY"):
         self.symbol = symbol
         self.fyers_integration = FyersIntegration()
-        self._mds: Optional[FyersMarketDataService] = None
         self.ocs = OptionChainService(symbol)
 
     def _get_market_data_service(self) -> FyersMarketDataService:
-        if self._mds is None:
-            fyers_client = self.fyers_integration.get_fyers_instance()
-            self._mds = FyersMarketDataService(fyers_client)
-        return self._mds
+        # Always build with a fresh Fyers client so new access tokens are picked up.
+        fyers_client = self.fyers_integration.get_fyers_instance()
+        return FyersMarketDataService(fyers_client)
 
     # ---------- Core summary ----------
 

@@ -26,12 +26,10 @@ from waitress import serve
 from datetime import timedelta, datetime
 
 from src.premarket import PremarketAnalyzer
-from src.expiry_utils import TradingCalendar
 from src.option_selection import select_nifty_option_for_signal
 from src.fyers_integration import FyersIntegration
 from src.config_manager import ConfigManager
 from src.calendar_loader import get_nse_trading_calendar_for_current_year
-from src.fyers_integration import FyersIntegration
 
 
 
@@ -127,7 +125,7 @@ def login_required(f):
             return redirect(url_for("login"))
 
         # If we've been inactive for > 10 minutes, force logout
-        if last_seen is not None and now - last_seen > 5 * 60:
+        if last_seen is not None and now - last_seen > 10 * 60:
             session.clear()
             return redirect(url_for("login"))
 
@@ -280,6 +278,21 @@ def parse_simple_alert(text: str):
     # TODO: SELL/EXIT logic if you want Python to manage exits as well
     return None, None, None
 
+
+def fetch_nifty_spot_price() -> float:
+    """Fetch current NIFTY spot price via Fyers quotes API."""
+    fyers = fyers_integration.get_fyers_instance()
+    resp = fyers.quotes({"symbols": "NSE:NIFTY50-INDEX"})
+    if resp.get("s") != "ok":
+        raise RuntimeError(f"Error fetching NIFTY quote: {resp}")
+
+    data = resp.get("d") or []
+    v = data[0].get("v", {}) if data else {}
+    lp = v.get("lp")
+    if lp is None:
+        raise RuntimeError(f"Last price missing in quote payload: {resp}")
+    return float(lp)
+
 def choose_nifty_option_from_signal(spot_price: float, direction: str, setup_type: str):
     now_ist = datetime.now(IST)
 
@@ -305,7 +318,10 @@ def choose_nifty_option_from_signal(spot_price: float, direction: str, setup_typ
     return selection
 
 
-def build_order_details_from_signal(spot_price: float, direction: str, setup_type: str):
+def build_order_details_from_signal(direction: str, setup_type: str, spot_price: float | None = None):
+    if spot_price is None:
+        spot_price = fetch_nifty_spot_price()
+
     selection = choose_nifty_option_from_signal(
         spot_price=spot_price,
         direction=direction,
@@ -462,7 +478,19 @@ def webhook():
         # you can extend to support 'sell exits' later
         return jsonify({"status": "ignored", "reason": "non_buy_not_yet_supported"}), 200
 
-    order_details, note = build_order_details_from_signal(direction, setup_type)
+    try:
+        order_details, note = build_order_details_from_signal(direction, setup_type)
+    except ValueError as exc:
+        # Common case: Fyers access token missing/not generated yet
+        logger.error(f"Webhook blocked: {exc}")
+        return jsonify({
+            "status": "error",
+            "reason": "fyers_auth_required",
+            "detail": str(exc),
+        }), 428
+    except Exception as exc:
+        logger.error(f"Webhook failed to build order: {exc}")
+        return jsonify({"status": "error", "detail": str(exc)}), 500
 
     # Convert side string to Fyers numeric
     order_details["side"] = 1
