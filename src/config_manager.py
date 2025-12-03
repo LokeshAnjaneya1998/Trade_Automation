@@ -1,9 +1,12 @@
 # src/config_manager.py (example pattern)
 
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # Persist config next to other logs/config artifacts
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "configandlogs" / "config.json"
@@ -46,7 +49,7 @@ class ConfigManager:
             password=web_login_raw.get("password", ""),
         )
 
-        return AppConfig(
+        cfg = AppConfig(
             client_id=data.get("client_id", ""),
             redirect_uri=data.get("redirect_uri", ""),
             secret_key=data.get("secret_key", ""),
@@ -55,6 +58,8 @@ class ConfigManager:
             auth_code=data.get("auth_code", ""),
             web_login=web_login,
         )
+        logger.debug("Loaded config from %s", self._path)
+        return cfg
 
     def save_config(self, config: Optional[AppConfig] = None) -> None:
         """Persist the config to disk."""
@@ -65,3 +70,4 @@ class ConfigManager:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
+        logger.info("Saved config to %s", self._path)

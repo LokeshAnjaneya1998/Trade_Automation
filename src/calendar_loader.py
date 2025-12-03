@@ -90,10 +90,13 @@ def _cache_path_for_year(year: int) -> Path:
 def _load_raw_from_cache(year: int) -> Dict[str, Any] | None:
     path = _cache_path_for_year(year)
     if not path.exists():
+        logger.debug("Holiday cache not found for %d at %s", year, path)
         return None
     try:
         with path.open("r", encoding="utf-8") as f:
-            return json.load(f)
+            raw = json.load(f)
+        logger.info("Loaded NSE holiday cache for %d from %s", year, path)
+        return raw
     except Exception as exc:
         logger.warning("Failed to read holiday cache %s: %s", path, exc)
         return None
@@ -120,6 +123,7 @@ def load_or_fetch_nse_trading_holidays(year: int | None = None) -> List[date]:
 
     raw = _load_raw_from_cache(year)
     if raw is None:
+        logger.info("Fetching NSE holiday master for year %d", year)
         raw = _download_raw_holiday_json()
 
         # Determine which years are present in FO segment
@@ -145,6 +149,7 @@ def load_or_fetch_nse_trading_holidays(year: int | None = None) -> List[date]:
             )
 
     holidays = _parse_fo_holidays_for_year(raw, year)
+    logger.info("Parsed %d NSE holidays for year %d", len(holidays), year)
     return holidays
 
 

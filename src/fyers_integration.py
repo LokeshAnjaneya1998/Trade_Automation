@@ -18,6 +18,7 @@ class FyersIntegration:
         """Reload config from disk so new tokens are picked up by other instances."""
         self.config_manager = ConfigManager()
         self.config = self.config_manager.config
+        logger.debug("FyersIntegration config refreshed from disk")
 
     def _build_session(self) -> fyersModel.SessionModel:
         missing = [

@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, date, time
 from typing import Literal
 
 from src.expiry_utils import (
     TradingCalendar,
-    next_weekly_expiry_date,
     fyers_nifty_option_symbol,
+    next_weekly_expiry_date,
 )
 
-Direction   = Literal["LONG_CALL", "LONG_PUT"]
-SetupType   = Literal["BREAKOUT", "REVERSAL"]   # REVERSAL = sideways / ORB bounce
+Direction = Literal["LONG_CALL", "LONG_PUT"]
+SetupType = Literal["BREAKOUT", "REVERSAL"]  # REVERSAL = sideways / ORB bounce
 StrikeStyle = Literal["ATM", "OTM_1"]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -41,7 +44,7 @@ def select_nifty_option_for_signal(
     direction: Direction,
     setup_type: SetupType,
     calendar: TradingCalendar,
-    expiry_weekday: int = 1,      # Tuesday
+    expiry_weekday: int = 1,  # Tuesday
     strike_step: int = 50,
     underlying: str = "NIFTY",
     exchange_prefix: str = "NSE:",
@@ -49,17 +52,14 @@ def select_nifty_option_for_signal(
     after_close: time = time(15, 30),
 ) -> OptionSelection:
     """
-    Your rule:
+    Select an option contract given the signal context.
 
+    Rules:
     - BREAKOUT:
-        - Non-expiry day  → ATM
-        - Expiry day      → 1-OTM (if use_otm_on_expiry_breakout)
+        - Non-expiry day -> ATM
+        - Expiry day     -> 1-OTM (if use_otm_on_expiry_breakout)
     - REVERSAL (sideways / ORB bounce):
         - Always 1-OTM
-
-    Then builds final symbol:
-      - Weekly:  NSE:NIFTY25D0226000CE
-      - Monthly: NSE:NIFTY25DEC26000CE
     """
     if spot_price <= 0:
         raise ValueError("spot_price must be > 0")
@@ -83,19 +83,14 @@ def select_nifty_option_for_signal(
         else:
             strike_style = "ATM"
     else:
-        # REVERSAL (range bounce)
         strike_style = "OTM_1"
 
     # 4) Compute strike
     atm = _round_to_step(spot_price, strike_step)
-
     if strike_style == "ATM":
         strike = atm
     else:
-        if direction == "LONG_CALL":
-            strike = atm + strike_step
-        else:
-            strike = atm - strike_step
+        strike = atm + strike_step if direction == "LONG_CALL" else atm - strike_step
 
     opt_type = "CE" if direction == "LONG_CALL" else "PE"
 
@@ -110,8 +105,18 @@ def select_nifty_option_for_signal(
     )
 
     notes = (
-        f"spot≈{spot_price:.1f}, ATM={atm}, style={strike_style}, "
+        f"spot={spot_price:.1f}, ATM={atm}, style={strike_style}, "
         f"expiry={expiry_d.isoformat()}, symbol={symbol}"
+    )
+
+    logger.info(
+        "Option selection -> dir=%s setup=%s style=%s strike=%s expiry=%s symbol=%s",
+        direction,
+        setup_type,
+        strike_style,
+        strike,
+        expiry_d,
+        symbol,
     )
 
     return OptionSelection(

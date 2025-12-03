@@ -5,12 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import Set, Literal
+import logging
 
 # Month code tables
 MONTH_LETTERS = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"]
 MONTH_3L      = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"]
 
 TradingCalendarKind = Literal["EQUITY_DERIVATIVES"]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,13 @@ def next_weekly_expiry_date(
         candidate = base_date + timedelta(days=days_ahead)
 
     expiry_date = calendar.previous_trading_day(candidate)
+    logger.debug(
+        "next_weekly_expiry_date: now=%s base=%s candidate=%s expiry=%s",
+        now_ist.isoformat(),
+        base_date,
+        candidate,
+        expiry_date,
+    )
     return expiry_date
 
 
