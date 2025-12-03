@@ -1,16 +1,14 @@
 import logging
 import asyncio
 import os
-import sys
 import time
+import pytz
 import threading
 import re
 import html
 from pathlib import Path
 from functools import wraps
 from logging.handlers import RotatingFileHandler
-
-from src.premarket import PremarketAnalyzer
 
 
 from flask import (
@@ -22,12 +20,23 @@ from flask import (
     session,
     redirect,
     url_for,
-    flash
 )
-from src.fyers_integration import FyersIntegration
+
 from waitress import serve
-from datetime import timedelta
+from datetime import timedelta, datetime
+
+from src.premarket import PremarketAnalyzer
+from src.expiry_utils import TradingCalendar
+from src.option_selection import select_nifty_option_for_signal
+from src.fyers_integration import FyersIntegration
 from src.config_manager import ConfigManager
+from src.calendar_loader import get_nse_trading_calendar_for_current_year
+from src.fyers_integration import FyersIntegration
+
+
+
+IST = pytz.timezone("Asia/Kolkata")
+
 
 # ──────────────────────────────────────────────────────────────
 # Global trading state
@@ -241,6 +250,88 @@ def index():
     return "Fyers webhook server is running", 200
     
 
+# ──────────────────────────────────────────────────────────────
+# Signal building helpers
+# ──────────────────────────────────────────────────────────────
+
+def parse_simple_alert(text: str):
+    """
+    Expect patterns like:
+        BUY_CALL_BREAKOUT
+        BUY_CALL_REVERSAL
+        BUY_PUT_BREAKOUT
+        BUY_PUT_REVERSAL
+        SELL_CALL_EXIT   (for exits – you can expand later)
+
+    Returns (side, direction, setup_type) or (None, None, None) if unknown.
+    """
+    t = (text or "").strip().upper()
+
+    # you can make this more fancy later
+    if t in ("BUY_CALL_BREAKOUT", "BUY_CE_BREAKOUT"):
+        return "buy", "LONG_CALL", "BREAKOUT"
+    if t in ("BUY_CALL_REVERSAL", "BUY_CE_REVERSAL"):
+        return "buy", "LONG_CALL", "REVERSAL"
+
+    if t in ("BUY_PUT_BREAKOUT", "BUY_PE_BREAKOUT"):
+        return "buy", "LONG_PUT", "BREAKOUT"
+    if t in ("BUY_PUT_REVERSAL", "BUY_PE_REVERSAL"):
+        return "buy", "LONG_PUT", "REVERSAL"
+    # TODO: SELL/EXIT logic if you want Python to manage exits as well
+    return None, None, None
+
+def choose_nifty_option_from_signal(spot_price: float, direction: str, setup_type: str):
+    now_ist = datetime.now(IST)
+
+    # 1) Build TradingCalendar → uses NSE API + cache
+    calendar = get_nse_trading_calendar_for_current_year()
+
+    # 2) Use our selector
+    selection = select_nifty_option_for_signal(
+        now_ist=now_ist,
+        spot_price=spot_price,
+        direction=direction,   # "LONG_CALL" / "LONG_PUT"
+        setup_type=setup_type, # "BREAKOUT" / "REVERSAL"
+        calendar=calendar,
+        expiry_weekday=1,      # Tuesday
+        strike_step=50,
+        underlying="NIFTY",
+        exchange_prefix="NSE:",
+    )
+
+    # selection.symbol → final option symbol
+    # selection.strike → strike integer
+    # selection.notes  → debug info string
+    return selection
+
+
+def build_order_details_from_signal(spot_price: float, direction: str, setup_type: str):
+    selection = choose_nifty_option_from_signal(
+        spot_price=spot_price,
+        direction=direction,
+        setup_type=setup_type,
+    )
+
+    opt_type = "CE" if direction == "LONG_CALL" else "PE"
+
+    order_details = {
+        "symbol": selection.symbol,
+        "qty": 75,               # you can parameterize this
+        "type": 2,               # MARKET
+        "side": "buy",           # or "sell"
+        "productType": "INTRADAY",
+        "limitPrice": 0,
+        "stopPrice": 0,
+        "validity": "DAY",
+        "disclosedQty": 0,
+        "offlineOrder": False,
+        "stopLoss": 0,
+        "takeProfit": 0,
+        "optType": opt_type,
+        "optStrike": str(selection.strike),
+    }
+
+    return order_details, selection.notes
 
 # ──────────────────────────────────────────────────────────────
 # Routes: Dashboard + Logs
@@ -327,24 +418,24 @@ def capture_auth_code():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    data = request.get_json(force=True, silent=True) or {}
-    logging.info(f"Incoming webhook: {data}")
+    # Try JSON first (legacy Pine webhook)
+    data = request.get_json(force=True, silent=True)
+    raw_body = request.data.decode("utf-8", errors="ignore")
+
+    logging.info(f"Incoming webhook raw: {raw_body}")
+    logging.info(f"Incoming webhook json: {data}")
 
     if not TRADING_ENABLED:
-        logging.info(
-            "Webhook received but TRADING_ENABLED is False. Ignoring order."
-        )
+        logging.info("Webhook received but TRADING_ENABLED is False. Ignoring order.")
         return jsonify({"status": "ignored", "reason": "trading_paused"}), 200
 
-    if not data or "event" not in data:
-        return jsonify({"status": "Invalid webhook data"}), 400
-
-    if data["event"] == "place_order":
+    # ───────────── Legacy mode: Pine sends full JSON ─────────────
+    if isinstance(data, dict) and data.get("event") == "place_order":
         order_details = data.get("order_details", {})
 
-        # Basic safety
         side = order_details.get("side")
         symbol = order_details.get("symbol")
+
         if not side or not symbol:
             return jsonify({"status": "invalid_order_details"}), 400
 
@@ -356,11 +447,32 @@ def webhook():
         if symbol == "NSE:NIFTYBANK-INDEX":
             order_details["side"] = 1
 
-        logging.info(f"Order details: {order_details}")
+        logging.info(f"[LEGACY] Order details: {order_details}")
         asyncio.run(place_order(order_details))
-        return jsonify({"status": "Order processing initiated."}), 200
+        return jsonify({"status": "order_processing_initiated", "mode": "legacy"}), 200
 
-    return jsonify({"status": "No valid event found"}), 400
+    # ───────────── New mode: simple alert text ─────────────
+    alert_text = raw_body.strip()
+    side, direction, setup_type = parse_simple_alert(alert_text)
+
+    if not side or not direction or not setup_type:
+        return jsonify({"status": "ignored", "reason": "unrecognized_alert", "alert": alert_text}), 200
+
+    if side != "buy":
+        # you can extend to support 'sell exits' later
+        return jsonify({"status": "ignored", "reason": "non_buy_not_yet_supported"}), 200
+
+    order_details, note = build_order_details_from_signal(direction, setup_type)
+
+    # Convert side string to Fyers numeric
+    order_details["side"] = 1
+
+    logging.info(f"[PY-SIGNAL] {note}")
+    logging.info(f"[PY-SIGNAL] Order details: {order_details}")
+
+    asyncio.run(place_order(order_details))
+    return jsonify({"status": "order_processing_initiated", "mode": "python_signal"}), 200
+
 
 
 async def place_order(order_details):
