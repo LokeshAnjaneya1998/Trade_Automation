@@ -10,6 +10,7 @@ import requests
 from fyers_apiv3 import fyersModel
 
 from .models import (
+    GlobalSnapshot,
     NiftyRegime,
     OIPressure,
 )
@@ -34,6 +35,10 @@ class FyersMarketDataService:
     def __init__(
         self,
         fyers_client: fyersModel.FyersModel,
+        spx_symbol: Optional[str] = None,
+        nasdaq_symbol: Optional[str] = None,
+        vix_symbol: Optional[str] = None,
+        crude_symbol: Optional[str] = None,
     ):
         self.fyers = fyers_client
         self._ist = IST
@@ -42,6 +47,11 @@ class FyersMarketDataService:
         self.nifty_symbol = "NSE:NIFTY50-INDEX"
         self.vix_symbol = "NSE:INDIAVIX-INDEX"
 
+        # Optional global symbols (provide actual tickers available in your Fyers account)
+        self.spx_symbol = spx_symbol
+        self.nasdaq_symbol = nasdaq_symbol
+        self.global_vix_symbol = vix_symbol
+        self.crude_symbol = crude_symbol
 
     # ---------- Helpers ----------
 
@@ -207,6 +217,63 @@ class FyersMarketDataService:
             gap_type=gap_type,
         )
 
+    def fetch_global_snapshot(self) -> GlobalSnapshot:
+        """
+        Attempt to pull high-level global metrics if symbols are provided;
+        otherwise return neutral baseline.
+        """
+        spx_change = 0.0
+        nasdaq_change = 0.0
+        vix_change = 0.0
+        crude_change = 0.0
+
+        if self.spx_symbol:
+            try:
+                spx_change = self._fetch_quote_change_pct(self.spx_symbol)
+                logger.info(f"Global SPX change% from {self.spx_symbol}: {spx_change}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch SPX change from {self.spx_symbol}: {e}")
+                logger.info(f"Failed to fetch SPX change from {self.spx_symbol}: {e}")
+
+        if self.nasdaq_symbol:
+            try:
+                nasdaq_change = self._fetch_quote_change_pct(self.nasdaq_symbol)
+                logger.info(f"Global NASDAQ change% from {self.nasdaq_symbol}: {nasdaq_change}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch NASDAQ change from {self.nasdaq_symbol}: {e}")
+                logger.info(f"Failed to fetch NASDAQ change from {self.nasdaq_symbol}: {e}")
+
+        if self.global_vix_symbol:
+            try:
+                vix_change = self._fetch_quote_change_pct(self.global_vix_symbol)
+                logger.info(f"Global VIX change% from {self.global_vix_symbol}: {vix_change}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch VIX change from {self.global_vix_symbol}: {e}")
+                logger.info(f"Failed to fetch VIX change from {self.global_vix_symbol}: {e}")
+
+        if self.crude_symbol:
+            try:
+                crude_change = self._fetch_quote_change_pct(self.crude_symbol)
+                logger.info(f"Crude change% from {self.crude_symbol}: {crude_change}")
+            except Exception as e:
+                logger.warning(f"Failed to fetch Crude change from {self.crude_symbol}: {e}")
+                logger.info(f"Failed to fetch Crude change from {self.crude_symbol}: {e}")
+
+        # Simple risk mood heuristic
+        if spx_change < 0 and nasdaq_change < 0 and vix_change > 0:
+            risk_mood = "Risk-Off"
+        elif spx_change > 0 and nasdaq_change > 0 and vix_change <= 0:
+            risk_mood = "Risk-On"
+        else:
+            risk_mood = "Mixed / Neutral"
+
+        return GlobalSnapshot(
+            spx_change=spx_change,
+            nasdaq_change=nasdaq_change,
+            vix_change=vix_change,
+            crude_change=crude_change,
+            risk_mood=risk_mood,
+        )
 
 
 # ============================================================
