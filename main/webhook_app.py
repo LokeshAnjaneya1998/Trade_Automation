@@ -1,9 +1,8 @@
 import logging
 import os
 import time
-import pytz
-import threading
 import re
+import threading
 import html
 from pathlib import Path
 from functools import wraps
@@ -22,7 +21,7 @@ from flask import (
 )
 
 from waitress import serve
-from datetime import timedelta, datetime
+from datetime import timedelta
 
 from src.premarket import PremarketAnalyzer
 from src.fyers_integration import FyersIntegration
@@ -32,10 +31,6 @@ from src.order_service import (
     build_order_details_from_signal,
     dispatch_order,
 )
-
-
-
-IST = pytz.timezone("Asia/Kolkata")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -334,6 +329,18 @@ def capture_auth_code():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    def _build_and_dispatch(mode: str, direction: str, setup_type: str, side: str):
+        order_details, note = build_order_details_from_signal(
+            fyers_integration,
+            direction=direction,
+            setup_type=setup_type,
+            side=side,
+        )
+        logging.info(f"[{mode}] {note}")
+        logging.info(f"[{mode}] Order details: {order_details}")
+        dispatch_order(fyers_integration, order_details)
+        return jsonify({"status": "order_processing_initiated", "mode": mode}), 200
+
     # Try JSON first (legacy Pine webhook)
     data = request.get_json(force=True, silent=True)
     raw_body = request.data.decode("utf-8", errors="ignore")
@@ -371,13 +378,7 @@ def webhook():
         if needs_selection:
             direction = "LONG_CALL" if opt_type == "CE" else "LONG_PUT"
             try:
-                order_details, note = build_order_details_from_signal(
-                    fyers_integration,
-                    direction=direction,
-                    setup_type="BREAKOUT",
-                    side=side,
-                )
-                logging.info(f"[LEGACY->PY] Built option from signal: {note}")
+                return _build_and_dispatch("LEGACY->PY", direction, "BREAKOUT", side)
             except Exception as exc:
                 logger.error(f"Legacy payload failed to build option: {exc}")
                 return jsonify({"status": "error", "detail": str(exc)}), 500
@@ -401,14 +402,7 @@ def webhook():
         return jsonify({"status": "ignored", "reason": "unrecognized_alert", "alert": alert_text}), 200
 
     try:
-        order_details, note = build_order_details_from_signal(
-            fyers_integration,
-            direction,
-            setup_type,
-            side=side,
-        )
-        logging.info(f"debug3 :{order_details}")
-        logging.info(f"debug4 :{note}")
+        return _build_and_dispatch("PY-SIGNAL", direction, setup_type, side)
     except ValueError as exc:
         # Common case: Fyers access token missing/not generated yet
         logger.error(f"Webhook blocked: {exc}")
@@ -421,13 +415,7 @@ def webhook():
         logger.error(f"Webhook failed to build order: {exc}")
         return jsonify({"status": "error", "detail": str(exc)}), 500
 
-   
-
-    logging.info(f"[PY-SIGNAL] {note}")
-    logging.info(f"[PY-SIGNAL] Order details: {order_details}")
-
-    dispatch_order(fyers_integration, order_details)
-    return jsonify({"status": "order_processing_initiated", "mode": "python_signal"}), 200
+ 
 
 
 
@@ -453,7 +441,7 @@ def restart_service():
         title="Restarting bot...",
         message="Bot is restarting... you will be redirected to the dashboard.",
         redirect_url=url_for("dashboard"),
-        delay_ms=3000,
+        delay_ms=1000,
     )
 
 
@@ -470,7 +458,7 @@ def pause_trading():
         title="Trading paused",
         message="Trading paused (no orders will be sent). Redirecting to dashboard...",
         redirect_url=url_for("dashboard"),
-        delay_ms=3000,
+        delay_ms=1000,
     )
 
 
@@ -487,7 +475,7 @@ def resume_trading():
         title="Trading resumed",
         message="Trading resumed. Redirecting to dashboard...",
         redirect_url=url_for("dashboard"),
-        delay_ms=3000,
+        delay_ms=1000,
     )
 
 

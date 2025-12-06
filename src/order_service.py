@@ -1,4 +1,5 @@
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -119,7 +120,8 @@ def _schedule_option_chain_refresh(interval_sec: int = 20):
 
 # Prime the cache on import
 _refresh_option_chain_async()
-_schedule_option_chain_refresh()
+if not os.getenv("ORDER_SERVICE_DISABLE_TIMER"):
+    _schedule_option_chain_refresh()
 
 
 # -------------------- Selection helpers --------------------
