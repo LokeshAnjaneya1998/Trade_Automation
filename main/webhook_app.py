@@ -630,7 +630,6 @@ def webhook():
     data = request.get_json(force=True, silent=True)
     raw_body = request.data.decode("utf-8", errors="ignore")
 
-    logging.info(f"Incoming webhook raw: {raw_body}")
     logging.info(f"Incoming webhook json: {data}")
 
     if not TRADING_ENABLED:
@@ -644,10 +643,15 @@ def webhook():
         side = order_details.get("side")
         symbol = order_details.get("symbol")
         opt_strike = str(order_details.get("optStrike", "") or "").strip()
-        opt_type = str(order_details.get("optType", "") or "").upper()
+        opt_type_raw = order_details.get("optType")
+        opt_type = str(opt_type_raw or "").upper().strip()
 
         if not side or not symbol:
             return jsonify({"status": "invalid_order_details"}), 400
+        if not opt_type:
+            return jsonify({"status": "invalid_order_details", "reason": "missing_optType"}), 400
+        if opt_type not in {"CE", "PE"}:
+            return jsonify({"status": "invalid_order_details", "reason": "invalid_optType", "optType": opt_type_raw}), 400
 
         # If legacy payload is the index (no strike), build option selection first.
         needs_selection = (
@@ -657,7 +661,6 @@ def webhook():
         )
 
         if needs_selection:
-            opt_type = opt_type if opt_type in {"CE", "PE"} else "CE"
             direction = "LONG_CALL" if opt_type == "CE" else "LONG_PUT"
             try:
                 order_details, note = build_order_details_from_signal(
@@ -684,9 +687,6 @@ def webhook():
     # ───────────── New mode: simple alert text ─────────────
     alert_text = raw_body.strip()
     side, direction, setup_type = parse_simple_alert(alert_text)
-
-    logging.info(f"debug1 :{alert_text}")
-    logging.info(f"debug2 :{side}, {direction}, {setup_type}")
 
     if not side or not direction or not setup_type:
         return jsonify({"status": "ignored", "reason": "unrecognized_alert", "alert": alert_text}), 200
