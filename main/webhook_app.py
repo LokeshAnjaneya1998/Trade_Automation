@@ -1,5 +1,4 @@
 import logging
-import asyncio
 import os
 import time
 import pytz
@@ -26,10 +25,12 @@ from waitress import serve
 from datetime import timedelta, datetime
 
 from src.premarket import PremarketAnalyzer
-from src.option_selection import select_nifty_option_for_signal
+from src.option_selection import OptionSelection, select_nifty_option_for_signal
 from src.fyers_integration import FyersIntegration
 from src.config_manager import ConfigManager
 from src.calendar_loader import get_nse_trading_calendar_for_current_year
+from src.premarket.services import OptionChainService
+from src.expiry_utils import fyers_nifty_option_symbol
 
 
 
@@ -44,6 +45,11 @@ logger = logging.getLogger(__name__)
 
 TRADING_ENABLED = True  # in-memory switch
 CURRENT_SESSION_TOKEN: str | None = None  # track single active session
+TRADING_CALENDAR = get_nse_trading_calendar_for_current_year()
+OPTION_CHAIN_CACHE = {"ts": 0.0, "data": None}
+_OPTION_CHAIN_LOCK = threading.Lock()
+_OPTION_CHAIN_INFLIGHT = False
+_OPTION_CHAIN_LAST_ERROR_TS = 0.0
 
 
 def set_trading_enabled(value: bool):
@@ -64,6 +70,7 @@ TEMPLATES_DIR = BASE_DIR / "templates"
 app = Flask(__name__, template_folder=str(TEMPLATES_DIR))
 fyers_integration = FyersIntegration()
 premarket_analyzer = PremarketAnalyzer(symbol="NIFTY")
+option_chain_service = OptionChainService(symbol="NIFTY")
 config_manager = ConfigManager()
 config = config_manager.config
 APP_SECRET = (
@@ -275,12 +282,23 @@ def parse_simple_alert(text: str):
         return "buy", "LONG_PUT", "BREAKOUT"
     if t in ("BUY_PUT_REVERSAL", "BUY_PE_REVERSAL"):
         return "buy", "LONG_PUT", "REVERSAL"
-    # TODO: SELL/EXIT logic if you want Python to manage exits as well
+    if t in ("SELL_CALL_EXIT", "SELL_CE_EXIT", "EXIT_CALL", "EXIT_CE"):
+        return "sell", "LONG_CALL", "EXIT"
+    if t in ("SELL_PUT_EXIT", "SELL_PE_EXIT", "EXIT_PUT", "EXIT_PE"):
+        return "sell", "LONG_PUT", "EXIT"
     return None, None, None
 
 
 def fetch_nifty_spot_price() -> float:
     """Fetch current NIFTY spot price via Fyers quotes API."""
+    cached = get_cached_option_chain()
+    if cached:
+        try:
+            underlying = cached.get("records", {}).get("underlyingValue") or cached.get("filtered", {}).get("data", [{}])[0].get("underlyingValue")
+            if underlying:
+                return float(underlying)
+        except Exception:
+            pass
     fyers = fyers_integration.get_fyers_instance()
     resp = fyers.quotes({"symbols": "NSE:NIFTY50-INDEX"})
     if resp.get("s") != "ok":
@@ -293,48 +311,222 @@ def fetch_nifty_spot_price() -> float:
         raise RuntimeError(f"Last price missing in quote payload: {resp}")
     return float(lp)
 
-def choose_nifty_option_from_signal(spot_price: float, direction: str, setup_type: str):
+
+def _refresh_option_chain_async():
+    """
+    Fire-and-forget refresh of NSE option chain. Does not block webhook.
+    """
+    global _OPTION_CHAIN_INFLIGHT, _OPTION_CHAIN_LAST_ERROR_TS
+    with _OPTION_CHAIN_LOCK:
+        if _OPTION_CHAIN_INFLIGHT:
+            return
+        _OPTION_CHAIN_INFLIGHT = True
+
+    def _worker():
+        global _OPTION_CHAIN_INFLIGHT, _OPTION_CHAIN_LAST_ERROR_TS
+        try:
+            data = option_chain_service._fetch_raw()
+            OPTION_CHAIN_CACHE["data"] = data
+            OPTION_CHAIN_CACHE["ts"] = time.time()
+        except Exception as exc:
+            now = time.time()
+            if now - _OPTION_CHAIN_LAST_ERROR_TS > 300:
+                logger.warning("Option chain refresh failed: %s", exc)
+                _OPTION_CHAIN_LAST_ERROR_TS = now
+            else:
+                logger.debug("Option chain refresh failed (suppressed): %s", exc)
+        finally:
+            _OPTION_CHAIN_INFLIGHT = False
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def get_cached_option_chain(max_age_sec: int = 30):
+    """
+    Return cached option-chain data if fresh enough.
+    If stale/missing, trigger async refresh and return last known (may be None).
+    """
+    now = time.time()
+    cached = OPTION_CHAIN_CACHE.get("data")
+    ts = OPTION_CHAIN_CACHE.get("ts") or 0
+    age = now - ts
+    if cached and age <= max_age_sec:
+        return cached
+    # trigger refresh without blocking
+    _refresh_option_chain_async()
+    return cached
+
+
+# Warm the option-chain cache at startup (best-effort, non-blocking)
+_refresh_option_chain_async()
+
+
+def _schedule_option_chain_refresh(interval_sec: int = 20):
+    """
+    Periodically refresh option chain so webhook paths remain warm.
+    """
+    def _tick():
+        _refresh_option_chain_async()
+        _schedule_option_chain_refresh(interval_sec)
+
+    t = threading.Timer(interval_sec, _tick)
+    t.daemon = True
+    t.start()
+
+
+_schedule_option_chain_refresh()
+
+def choose_nifty_option_from_signal(
+    spot_price: float,
+    direction: str,
+    setup_type: str,
+    calendar=None,
+):
     now_ist = datetime.now(IST)
+    calendar = calendar or TRADING_CALENDAR
 
-    # 1) Build TradingCalendar → uses NSE API + cache
-    calendar = get_nse_trading_calendar_for_current_year()
-
-    # 2) Use our selector
     selection = select_nifty_option_for_signal(
         now_ist=now_ist,
         spot_price=spot_price,
         direction=direction,   # "LONG_CALL" / "LONG_PUT"
         setup_type=setup_type, # "BREAKOUT" / "REVERSAL"
         calendar=calendar,
-        expiry_weekday=1,      # Tuesday
+        expiry_weekday=1,      # NIFTY weekly expiry (legacy Tuesday expectation)
         strike_step=50,
         underlying="NIFTY",
         exchange_prefix="NSE:",
     )
-
-    # selection.symbol → final option symbol
-    # selection.strike → strike integer
-    # selection.notes  → debug info string
     return selection
 
 
-def build_order_details_from_signal(direction: str, setup_type: str, spot_price: float | None = None):
+def select_option_from_chain(
+    *,
+    spot_price: float,
+    direction: str,
+    setup_type: str,
+    calendar,
+    strike_step: int = 50,
+    search_window: int = 200,
+) -> OptionSelection | None:
+    """
+    Pick the most liquid strike near ATM using NSE option chain OI/volume.
+    Falls back to calendar-based selection if anything goes wrong.
+    """
+    raw = get_cached_option_chain()
+    if not raw:
+        return None
+
+    filtered = raw.get("filtered", {}) or {}
+    rows = filtered.get("data") or raw.get("records", {}).get("data", [])
+    expiry_str = filtered.get("expiryDate") or (raw.get("records", {}).get("expiryDates") or [None])[0]
+
+    if not rows or not expiry_str:
+        logger.warning("Option chain missing rows/expiry; falling back to calendar selection.")
+        return None
+
+    try:
+        expiry_d = datetime.strptime(expiry_str, "%d-%b-%Y").date()
+    except Exception as exc:
+        logger.warning("Unable to parse option-chain expiry %r: %s", expiry_str, exc)
+        return None
+
+    atm = int(round(spot_price / strike_step) * strike_step)
+    lower = atm - search_window
+    upper = atm + search_window
+    leg_key = "CE" if direction == "LONG_CALL" else "PE"
+
+    best = None
+    for row in rows:
+        strike = row.get("strikePrice")
+        if strike is None or strike < lower or strike > upper:
+            continue
+        leg = row.get(leg_key)
+        if not leg:
+            continue
+
+        oi = float(leg.get("openInterest") or 0)
+        vol = float(leg.get("totalTradedVolume") or 0)
+        ltp = float(leg.get("lastPrice") or 0)
+        score = oi * 0.7 + vol * 0.3  # liquidity + participation
+
+        if best is None or score > best["score"]:
+            best = {"strike": int(strike), "oi": oi, "vol": vol, "ltp": ltp, "score": score}
+
+    if not best:
+        logger.warning("Option chain scan produced no candidates; falling back to calendar selection.")
+        return None
+
+    opt_type = "CE" if direction == "LONG_CALL" else "PE"
+    symbol = fyers_nifty_option_symbol(
+        underlying="NIFTY",
+        expiry_d=expiry_d,
+        strike=best["strike"],
+        opt_type=opt_type,
+        calendar=calendar,
+        expiry_weekday=1,
+        exchange_prefix="NSE:",
+    )
+
+    notes = (
+        f"OI-based strike={best['strike']} ({leg_key}) oi={best['oi']:.0f} "
+        f"vol={best['vol']:.0f} ltp={best['ltp']:.2f} expiry={expiry_d}"
+    )
+
+    return OptionSelection(
+        direction=direction,
+        setup_type=setup_type,
+        strike_style="ATM",
+        strike=best["strike"],
+        expiry_date=expiry_d,
+        symbol=symbol,
+        notes=notes,
+    )
+
+
+def build_order_details_from_signal(
+    direction: str,
+    setup_type: str,
+    spot_price: float | None = None,
+    side: str = "buy"):
+    selection_setup = setup_type if setup_type in ("BREAKOUT", "REVERSAL") else "BREAKOUT"
+    # Try cached option-chain underlying to avoid an extra quote call
+    raw_chain = get_cached_option_chain()
+    if spot_price is None and raw_chain:
+        try:
+            spot_price = float(
+                raw_chain.get("records", {}).get("underlyingValue")
+                or raw_chain.get("filtered", {}).get("data", [{}])[0].get("underlyingValue")
+            )
+        except Exception:
+            spot_price = None
     if spot_price is None:
         spot_price = fetch_nifty_spot_price()
 
-    selection = choose_nifty_option_from_signal(
+    selection = select_option_from_chain(
         spot_price=spot_price,
         direction=direction,
-        setup_type=setup_type,
+        setup_type=selection_setup,
+        calendar=TRADING_CALENDAR,
     )
 
+    source = "option_chain"
+    if selection is None:
+        selection = choose_nifty_option_from_signal(
+            spot_price=spot_price,
+            direction=direction,
+            setup_type=selection_setup,
+            calendar=TRADING_CALENDAR,
+        )
+        source = "calendar"
+
     opt_type = "CE" if direction == "LONG_CALL" else "PE"
+    fyers_side = 1 if str(side).lower() == "buy" else -1
 
     order_details = {
         "symbol": selection.symbol,
         "qty": 75,               # you can parameterize this
         "type": 2,               # MARKET
-        "side": "buy",           # or "sell"
+        "side": fyers_side,      # 1 = buy, -1 = sell
         "productType": "INTRADAY",
         "limitPrice": 0,
         "stopPrice": 0,
@@ -347,7 +539,7 @@ def build_order_details_from_signal(direction: str, setup_type: str, spot_price:
         "optStrike": str(selection.strike),
     }
 
-    return order_details, selection.notes
+    return order_details, f"{selection.notes} | source={source}"
 
 # ──────────────────────────────────────────────────────────────
 # Routes: Dashboard + Logs
@@ -424,7 +616,7 @@ def capture_auth_code():
         <script>
             setTimeout(function() {
                 window.close();
-            }, 3000);
+            }, 1000);
         </script>
     </body>
     </html>
@@ -451,35 +643,58 @@ def webhook():
 
         side = order_details.get("side")
         symbol = order_details.get("symbol")
+        opt_strike = str(order_details.get("optStrike", "") or "").strip()
+        opt_type = str(order_details.get("optType", "") or "").upper()
 
         if not side or not symbol:
             return jsonify({"status": "invalid_order_details"}), 400
 
-        if side == "buy":
-            order_details["side"] = 1
-        elif side == "sell":
-            order_details["side"] = -1
+        # If legacy payload is the index (no strike), build option selection first.
+        needs_selection = (
+            symbol.upper().endswith("NIFTY50-INDEX")
+            or symbol.upper().endswith("NIFTY 50")
+            or opt_strike == ""
+        )
 
-        #if symbol == "NSE:NIFTYBANK-INDEX":
-            #order_details["side"] = 1
+        if needs_selection:
+            opt_type = opt_type if opt_type in {"CE", "PE"} else "CE"
+            direction = "LONG_CALL" if opt_type == "CE" else "LONG_PUT"
+            try:
+                order_details, note = build_order_details_from_signal(
+                    direction=direction,
+                    setup_type="BREAKOUT",
+                    side=side,
+                )
+                logging.info(f"[LEGACY->PY] Built option from signal: {note}")
+            except Exception as exc:
+                logger.error(f"Legacy payload failed to build option: {exc}")
+                return jsonify({"status": "error", "detail": str(exc)}), 500
+        else:
+            if side == "buy":
+                order_details["side"] = 1
+            elif side == "sell":
+                order_details["side"] = -1
+
+       
 
         logging.info(f"[LEGACY] Order details: {order_details}")
-        asyncio.run(place_order(order_details))
+        dispatch_order(order_details)
         return jsonify({"status": "order_processing_initiated", "mode": "legacy"}), 200
 
     # ───────────── New mode: simple alert text ─────────────
     alert_text = raw_body.strip()
     side, direction, setup_type = parse_simple_alert(alert_text)
 
+    logging.info(f"debug1 :{alert_text}")
+    logging.info(f"debug2 :{side}, {direction}, {setup_type}")
+
     if not side or not direction or not setup_type:
         return jsonify({"status": "ignored", "reason": "unrecognized_alert", "alert": alert_text}), 200
 
-    if side != "buy":
-        # you can extend to support 'sell exits' later
-        return jsonify({"status": "ignored", "reason": "non_buy_not_yet_supported"}), 200
-
     try:
-        order_details, note = build_order_details_from_signal(direction, setup_type)
+        order_details, note = build_order_details_from_signal(direction, setup_type, side=side)
+        logging.info(f"debug3 :{order_details}")
+        logging.info(f"debug4 :{note}")
     except ValueError as exc:
         # Common case: Fyers access token missing/not generated yet
         logger.error(f"Webhook blocked: {exc}")
@@ -492,18 +707,17 @@ def webhook():
         logger.error(f"Webhook failed to build order: {exc}")
         return jsonify({"status": "error", "detail": str(exc)}), 500
 
-    # Convert side string to Fyers numeric
-    order_details["side"] = 1
+   
 
     logging.info(f"[PY-SIGNAL] {note}")
     logging.info(f"[PY-SIGNAL] Order details: {order_details}")
 
-    asyncio.run(place_order(order_details))
+    dispatch_order(order_details)
     return jsonify({"status": "order_processing_initiated", "mode": "python_signal"}), 200
 
 
 
-async def place_order(order_details):
+def place_order(order_details):
     try:
         logging.info(f"Placing order via Fyers: {order_details}")
         fyers = fyers_integration.get_fyers_instance()
@@ -511,6 +725,13 @@ async def place_order(order_details):
         logging.info(f"Order response: {response}")
     except Exception as e:
         logging.error(f"Order placement error: {e}")
+
+
+def dispatch_order(order_details):
+    """
+    Fire-and-forget wrapper so webhook responses are instant.
+    """
+    threading.Thread(target=lambda: place_order(order_details), daemon=True).start()
 
 
 # ──────────────────────────────────────────────────────────────
