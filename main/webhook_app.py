@@ -1,10 +1,8 @@
 import logging
-import asyncio
 import os
 import time
-import pytz
-import threading
 import re
+import threading
 import html
 from pathlib import Path
 from functools import wraps
@@ -23,17 +21,16 @@ from flask import (
 )
 
 from waitress import serve
-from datetime import timedelta, datetime
+from datetime import timedelta
 
 from src.premarket import PremarketAnalyzer
-from src.option_selection import select_nifty_option_for_signal
 from src.fyers_integration import FyersIntegration
 from src.config_manager import ConfigManager
-from src.calendar_loader import get_nse_trading_calendar_for_current_year
-
-
-
-IST = pytz.timezone("Asia/Kolkata")
+from src.order_service import (
+    parse_simple_alert,
+    build_order_details_from_signal,
+    dispatch_order,
+)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -248,108 +245,6 @@ def index():
     return "Fyers webhook server is running", 200
     
 
-# ──────────────────────────────────────────────────────────────
-# Signal building helpers
-# ──────────────────────────────────────────────────────────────
-
-def parse_simple_alert(text: str):
-    """
-    Expect patterns like:
-        BUY_CALL_BREAKOUT
-        BUY_CALL_REVERSAL
-        BUY_PUT_BREAKOUT
-        BUY_PUT_REVERSAL
-        SELL_CALL_EXIT   (for exits – you can expand later)
-
-    Returns (side, direction, setup_type) or (None, None, None) if unknown.
-    """
-    t = (text or "").strip().upper()
-
-    # you can make this more fancy later
-    if t in ("BUY_CALL_BREAKOUT", "BUY_CE_BREAKOUT"):
-        return "buy", "LONG_CALL", "BREAKOUT"
-    if t in ("BUY_CALL_REVERSAL", "BUY_CE_REVERSAL"):
-        return "buy", "LONG_CALL", "REVERSAL"
-
-    if t in ("BUY_PUT_BREAKOUT", "BUY_PE_BREAKOUT"):
-        return "buy", "LONG_PUT", "BREAKOUT"
-    if t in ("BUY_PUT_REVERSAL", "BUY_PE_REVERSAL"):
-        return "buy", "LONG_PUT", "REVERSAL"
-    # TODO: SELL/EXIT logic if you want Python to manage exits as well
-    return None, None, None
-
-
-def fetch_nifty_spot_price() -> float:
-    """Fetch current NIFTY spot price via Fyers quotes API."""
-    fyers = fyers_integration.get_fyers_instance()
-    resp = fyers.quotes({"symbols": "NSE:NIFTY50-INDEX"})
-    if resp.get("s") != "ok":
-        raise RuntimeError(f"Error fetching NIFTY quote: {resp}")
-
-    data = resp.get("d") or []
-    v = data[0].get("v", {}) if data else {}
-    lp = v.get("lp")
-    if lp is None:
-        raise RuntimeError(f"Last price missing in quote payload: {resp}")
-    return float(lp)
-
-def choose_nifty_option_from_signal(spot_price: float, direction: str, setup_type: str):
-    now_ist = datetime.now(IST)
-
-    # 1) Build TradingCalendar → uses NSE API + cache
-    calendar = get_nse_trading_calendar_for_current_year()
-
-    # 2) Use our selector
-    selection = select_nifty_option_for_signal(
-        now_ist=now_ist,
-        spot_price=spot_price,
-        direction=direction,   # "LONG_CALL" / "LONG_PUT"
-        setup_type=setup_type, # "BREAKOUT" / "REVERSAL"
-        calendar=calendar,
-        expiry_weekday=1,      # Tuesday
-        strike_step=50,
-        underlying="NIFTY",
-        exchange_prefix="NSE:",
-    )
-
-    # selection.symbol → final option symbol
-    # selection.strike → strike integer
-    # selection.notes  → debug info string
-    return selection
-
-
-def build_order_details_from_signal(direction: str, setup_type: str, spot_price: float | None = None):
-    if spot_price is None:
-        spot_price = fetch_nifty_spot_price()
-
-    selection = choose_nifty_option_from_signal(
-        spot_price=spot_price,
-        direction=direction,
-        setup_type=setup_type,
-    )
-
-    opt_type = "CE" if direction == "LONG_CALL" else "PE"
-
-    order_details = {
-        "symbol": selection.symbol,
-        "qty": 75,               # you can parameterize this
-        "type": 2,               # MARKET
-        "side": "buy",           # or "sell"
-        "productType": "INTRADAY",
-        "limitPrice": 0,
-        "stopPrice": 0,
-        "validity": "DAY",
-        "disclosedQty": 0,
-        "offlineOrder": False,
-        "stopLoss": 0,
-        "takeProfit": 0,
-        "optType": opt_type,
-        "optStrike": str(selection.strike),
-    }
-
-    return order_details, selection.notes
-
-# ──────────────────────────────────────────────────────────────
 # Routes: Dashboard + Logs
 # ──────────────────────────────────────────────────────────────
 
@@ -424,7 +319,7 @@ def capture_auth_code():
         <script>
             setTimeout(function() {
                 window.close();
-            }, 3000);
+            }, 1000);
         </script>
     </body>
     </html>
@@ -434,11 +329,22 @@ def capture_auth_code():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    def _build_and_dispatch(mode: str, direction: str, setup_type: str, side: str):
+        order_details, note = build_order_details_from_signal(
+            fyers_integration,
+            direction=direction,
+            setup_type=setup_type,
+            side=side,
+        )
+        logging.info(f"[{mode}] {note}")
+        logging.info(f"[{mode}] Order details: {order_details}")
+        dispatch_order(fyers_integration, order_details)
+        return jsonify({"status": "order_processing_initiated", "mode": mode}), 200
+
     # Try JSON first (legacy Pine webhook)
     data = request.get_json(force=True, silent=True)
     raw_body = request.data.decode("utf-8", errors="ignore")
 
-    logging.info(f"Incoming webhook raw: {raw_body}")
     logging.info(f"Incoming webhook json: {data}")
 
     if not TRADING_ENABLED:
@@ -451,20 +357,36 @@ def webhook():
 
         side = order_details.get("side")
         symbol = order_details.get("symbol")
+        opt_strike = str(order_details.get("optStrike", "") or "").strip()
+        opt_type_raw = order_details.get("optType")
+        opt_type = str(opt_type_raw or "").upper().strip()
 
         if not side or not symbol:
             return jsonify({"status": "invalid_order_details"}), 400
+        if not opt_type:
+            return jsonify({"status": "invalid_order_details", "reason": "missing_optType"}), 400
+        if opt_type not in {"CE", "PE"}:
+            return jsonify({"status": "invalid_order_details", "reason": "invalid_optType", "optType": opt_type_raw}), 400
 
-        if side == "buy":
-            order_details["side"] = 1
-        elif side == "sell":
-            order_details["side"] = -1
+        # If legacy payload is the index (no strike), build option selection first.
+        needs_selection = (
+            symbol.upper().endswith("NIFTY50-INDEX")
+            or symbol.upper().endswith("NIFTY 50")
+            or opt_strike == ""
+        )
 
-        if symbol == "NSE:NIFTYBANK-INDEX":
-            order_details["side"] = 1
+        if needs_selection:
+            direction = "LONG_CALL" if opt_type == "CE" else "LONG_PUT"
+            try:
+                return _build_and_dispatch("LEGACY->PY", direction, "BREAKOUT", side)
+            except Exception as exc:
+                logger.error(f"Legacy payload failed to build option: {exc}")
+                return jsonify({"status": "error", "detail": str(exc)}), 500
+
+    
 
         logging.info(f"[LEGACY] Order details: {order_details}")
-        asyncio.run(place_order(order_details))
+        dispatch_order(fyers_integration, order_details)
         return jsonify({"status": "order_processing_initiated", "mode": "legacy"}), 200
 
     # ───────────── New mode: simple alert text ─────────────
@@ -474,12 +396,8 @@ def webhook():
     if not side or not direction or not setup_type:
         return jsonify({"status": "ignored", "reason": "unrecognized_alert", "alert": alert_text}), 200
 
-    if side != "buy":
-        # you can extend to support 'sell exits' later
-        return jsonify({"status": "ignored", "reason": "non_buy_not_yet_supported"}), 200
-
     try:
-        order_details, note = build_order_details_from_signal(direction, setup_type)
+        return _build_and_dispatch("PY-SIGNAL", direction, setup_type, side)
     except ValueError as exc:
         # Common case: Fyers access token missing/not generated yet
         logger.error(f"Webhook blocked: {exc}")
@@ -492,25 +410,8 @@ def webhook():
         logger.error(f"Webhook failed to build order: {exc}")
         return jsonify({"status": "error", "detail": str(exc)}), 500
 
-    # Convert side string to Fyers numeric
-    order_details["side"] = 1
+ 
 
-    logging.info(f"[PY-SIGNAL] {note}")
-    logging.info(f"[PY-SIGNAL] Order details: {order_details}")
-
-    asyncio.run(place_order(order_details))
-    return jsonify({"status": "order_processing_initiated", "mode": "python_signal"}), 200
-
-
-
-async def place_order(order_details):
-    try:
-        logging.info(f"Placing order via Fyers: {order_details}")
-        fyers = fyers_integration.get_fyers_instance()
-        response = fyers.place_order(order_details)
-        logging.info(f"Order response: {response}")
-    except Exception as e:
-        logging.error(f"Order placement error: {e}")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -535,7 +436,7 @@ def restart_service():
         title="Restarting bot...",
         message="Bot is restarting... you will be redirected to the dashboard.",
         redirect_url=url_for("dashboard"),
-        delay_ms=3000,
+        delay_ms=1000,
     )
 
 
@@ -552,7 +453,7 @@ def pause_trading():
         title="Trading paused",
         message="Trading paused (no orders will be sent). Redirecting to dashboard...",
         redirect_url=url_for("dashboard"),
-        delay_ms=3000,
+        delay_ms=1000,
     )
 
 
@@ -569,7 +470,7 @@ def resume_trading():
         title="Trading resumed",
         message="Trading resumed. Redirecting to dashboard...",
         redirect_url=url_for("dashboard"),
-        delay_ms=3000,
+        delay_ms=1000,
     )
 
 

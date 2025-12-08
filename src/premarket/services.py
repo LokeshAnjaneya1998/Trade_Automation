@@ -190,6 +190,9 @@ class OptionChainService:
     pull NSE option chain for OI skew
     """
 
+    CACHE = {"ts": 0.0, "data": None}
+    CACHE_TTL = 20  # seconds
+
     NSE_BASE = "https://www.nseindia.com"
     HEADERS = {
         "User-Agent": "Mozilla/5.0",
@@ -200,7 +203,7 @@ class OptionChainService:
     def __init__(self, symbol: str = "NIFTY"):
         self.symbol = symbol
 
-    def _fetch_raw(self):
+    def _fetch_raw(self, max_age_sec: int | None = None):
         session = requests.Session()
         session.headers.update(self.HEADERS)
         _ = session.get(self.NSE_BASE, timeout=10)
@@ -210,9 +213,21 @@ class OptionChainService:
         resp.raise_for_status()
         return resp.json()
 
+    def _fetch_with_cache(self) -> Optional[dict]:
+        now = time.time()
+        if self.CACHE["data"] and (now - self.CACHE["ts"]) <= self.CACHE_TTL:
+            return self.CACHE["data"]
+        try:
+            raw = self._fetch_raw()
+            self.CACHE = {"ts": now, "data": raw}
+            return raw
+        except Exception:
+            # do not overwrite cache on failure
+            return self.CACHE["data"]
+
     def compute_oi_pressure(self) -> Optional[OIPressure]:
         try:
-            data = self._fetch_raw()
+            data = self._fetch_with_cache()
         except Exception:
             logger.warning("Option chain fetch failed; returning None")
             return None

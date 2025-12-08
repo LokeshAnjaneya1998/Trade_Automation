@@ -44,7 +44,7 @@ def select_nifty_option_for_signal(
     direction: Direction,
     setup_type: SetupType,
     calendar: TradingCalendar,
-    expiry_weekday: int = 1,  # Tuesday
+    expiry_weekday: int = 1,  # Tuesday (Mon=0)
     strike_step: int = 50,
     underlying: str = "NIFTY",
     exchange_prefix: str = "NSE:",
