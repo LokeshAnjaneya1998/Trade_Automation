@@ -39,10 +39,11 @@
         .status-enabled .status-dot { background: var(--success); }
         .status-paused { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.4); }
         .status-paused .status-dot { background: var(--danger); }
-        .grid { display: grid; grid-template-columns: 360px 1fr; gap: 14px; margin-bottom: 14px; }
+        .grid { display: grid; grid-template-columns: 360px 1fr; gap: 14px; align-items: start; }
+        .col-left { display: flex; flex-direction: column; gap: 14px; }
         .card { background: var(--card-bg); border-radius: 14px; border: 1px solid var(--border-subtle); padding: 16px 18px 18px 18px; box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45); }
         .card h2 { margin: 0 0 10px 0; font-size: 1rem; }
-        .controls-card { display: flex; flex-direction: column; }
+        .controls-card { display: flex; flex-direction: column; align-self: flex-start; }
         .stack { display: flex; flex-direction: column; gap: 10px; flex: 1; }
         .btn { cursor: pointer; border-radius: 10px; border: 1px solid transparent; padding: 11px 12px; font-size: 0.95rem; font-weight: 600; display: inline-flex; align-items: center; gap: 8px; justify-content: center; background: #111827; color: var(--text-main); transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease; width: 100%; }
         .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35); }
@@ -61,7 +62,6 @@
         .checkpoint-badge.WARN { background: rgba(234, 179, 8, 0.15); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.5); }
         .checkpoint-badge.FAIL { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.5); }
         .checkpoint-badge.INFO { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.5); }
-        .logs-snippet { background: #0f172a; border: 1px solid var(--border-subtle); border-radius: 10px; padding: 10px; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.78rem; line-height: 1.35; color: #e5e7eb; min-height: 260px; flex: 1; overflow-y: auto; white-space: normal; width: 100%; }
         @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
     </style>
 </head>
@@ -86,35 +86,67 @@
     </div>
 
     <div class="grid">
-        <div class="card controls-card">
-            <h2 style="margin-top:0;">Bot Controls</h2>
-            <div class="stack">
-                
-                <form method="POST" action="{{ url_for('pause_trading') }}">
-                    <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-red">⏸ Pause trading</button>
-                </form>
-                <form method="POST" action="{{ url_for('resume_trading') }}">
-                    <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-green">▶ Resume trading</button>
-                </form>
-                <form method="POST" action="{{ url_for('restart_service') }}">
-                    <input type="hidden" name="token" value="{{ admin_token }}">
-                    <button type="submit" class="btn btn-white">⟳ Restart bot</button>
-                </form>
-                {% if auth_url %}
-                <button type="button" class="btn btn-blue" onclick="window.open('{{ auth_url }}', '_blank');">🔗 Authentication link</button>
-                {% else %}
-                <button type="button" class="btn btn-blue" disabled>🔗 Authentication link (not yet available)</button>
-                {% endif %}
-                <button type="button" class="btn btn-yellow" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">📜 Recent logs (full page)</button>
-                <div class="logs-snippet" id="log-snippet">Loading last 10 log lines...</div>
+        <div class="col-left">
+            <div class="card controls-card">
+                <h2 style="margin-top:0;">Bot Controls</h2>
+                <div class="stack">
+                    
+                    <form method="POST" action="{{ url_for('pause_trading') }}">
+                        <input type="hidden" name="token" value="{{ admin_token }}">
+                        <button type="submit" class="btn btn-red">⏸ Pause trading</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('resume_trading') }}">
+                        <input type="hidden" name="token" value="{{ admin_token }}">
+                        <button type="submit" class="btn btn-green">▶ Resume trading</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('restart_service') }}">
+                        <input type="hidden" name="token" value="{{ admin_token }}">
+                        <button type="submit" class="btn btn-white">⟳ Restart bot</button>
+                    </form>
+                    {% if auth_url %}
+                    <button type="button" class="btn btn-blue" onclick="window.open('{{ auth_url }}', '_blank');">🔗 Authentication link</button>
+                    {% else %}
+                    <button type="button" class="btn btn-blue" disabled>🔗 Authentication link (not yet available)</button>
+                    {% endif %}
+                    <button type="button" class="btn btn-yellow" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">📜 Recent logs (full page)</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="section-header">
+                    <div><h2 style="margin:0;">Option Chain Snapshot – NIFTY</h2></div>
+                    <button type="button" class="btn btn-blue" id="oc-refresh-btn" style="width:auto; white-space:nowrap;">Refresh</button>
+                </div>
+                <div id="oc-meta" class="meta">Loading option chain...</div>
+                <div id="oc-body" style="display:none; flex-direction:column; gap:6px;">
+                    <div><strong>Spot:</strong> <span id="oc-spot"></span></div>
+                    <div><strong>CE OI (±200):</strong> <span id="oc-ce"></span></div>
+                    <div><strong>PE OI (±200):</strong> <span id="oc-pe"></span></div>
+                    <div><strong>Skew:</strong> <span id="oc-pressure"></span></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="section-header">
+                    <div><h2 style="margin:0;">Last Order</h2></div>
+                    <button type="button" class="btn btn-blue" id="last-order-refresh" style="width:auto; white-space:nowrap;">Refresh</button>
+                </div>
+                <div id="last-order-meta" class="meta">Loading last order...</div>
+                <div id="last-order-body" style="display:none; flex-direction:column; gap:6px;">
+                    <div><strong>Note:</strong> <span id="lo-note"></span></div>
+                    <div><strong>Mode:</strong> <span id="lo-mode"></span></div>
+                    <div><strong>Symbol:</strong> <span id="lo-symbol"></span></div>
+                    <div><strong>Side:</strong> <span id="lo-side"></span></div>
+                    <div><strong>Qty:</strong> <span id="lo-qty"></span></div>
+                    <div><strong>Strike:</strong> <span id="lo-strike"></span></div>
+                    <div><strong>When:</strong> <span id="lo-ts"></span></div>
+                </div>
             </div>
         </div>
 
         <div class="card">
             <div class="section-header">
-                <div><h2 style="margin:0;">Premarket ORB Checklist – NIFTY 50</h2></div>
+                <div><h2 style="margin:0;">Premarket ORB Checklist NIFTY 50</h2></div>
                 <button type="button" class="btn btn-blue" id="premarket-refresh-btn" style="width:auto; white-space:nowrap;">⟳ Refresh</button>
             </div>
             <div id="premarket-meta" class="meta">Loading premarket data...</div>
@@ -201,26 +233,83 @@
         }
     }
 
-    async function refreshLogSnippet() {
-        const box = document.getElementById("log-snippet");
-        if (!box) return;
+    async function loadOptionChain() {
+        const btn = document.getElementById("oc-refresh-btn");
+        const meta = document.getElementById("oc-meta");
+        const body = document.getElementById("oc-body");
+        if (btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
         try {
-            const res = await fetch("{{ url_for('logs_snippet') }}");
-            const htmlSnippet = await res.text();
-            box.innerHTML = htmlSnippet || "No logs yet.";
+            const res = await fetch("{{ url_for('optionchain_summary') }}");
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                const detail = data.detail || data.error || res.statusText || "Unknown error";
+                if (meta) meta.textContent = "Option chain unavailable: " + detail;
+                if (body) body.style.display = "none";
+                return;
+            }
+            if (meta) meta.textContent = "";
+            if (body) body.style.display = "flex";
+            document.getElementById("oc-spot").textContent = data.spot;
+            document.getElementById("oc-ce").textContent = data.ce_oi_near;
+            document.getElementById("oc-pe").textContent = data.pe_oi_near;
+            document.getElementById("oc-pressure").textContent = data.pressure;
         } catch (err) {
-            box.textContent = "Error loading logs: " + err;
-            console.error("Log snippet fetch failed:", err);
+            if (meta) meta.textContent = "Option chain error: " + err;
+            if (body) body.style.display = "none";
+            console.error("Option chain fetch failed:", err);
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = "Refresh"; }
+        }
+    }
+
+    async function loadLastOrder(silent = false) {
+        const btn = document.getElementById("last-order-refresh");
+        const meta = document.getElementById("last-order-meta");
+        const body = document.getElementById("last-order-body");
+        if (!silent && btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
+        try {
+            const res = await fetch("{{ url_for('last_order') }}");
+            const data = await res.json();
+            if (!res.ok || !data.order_details) {
+                const detail = data.detail || data.error || res.statusText || "No order yet";
+                if (meta) meta.textContent = "Last order unavailable: " + detail;
+                if (body) {
+                    body.style.display = "none";
+                    body.querySelectorAll("span").forEach(s => s.textContent = "");
+                }
+                return;
+            }
+            const od = data.order_details || {};
+            if (meta) meta.textContent = data.note || "";
+            if (body) body.style.display = "flex";
+            document.getElementById("lo-note").textContent = data.note || "";
+            document.getElementById("lo-mode").textContent = data.mode || "";
+            document.getElementById("lo-symbol").textContent = od.symbol || "";
+            document.getElementById("lo-side").textContent = od.side || "";
+            document.getElementById("lo-qty").textContent = od.qty || "";
+            document.getElementById("lo-strike").textContent = od.optStrike || "";
+            const ts = data.ts ? new Date(data.ts * 1000).toLocaleString() : "";
+            document.getElementById("lo-ts").textContent = ts;
+        } catch (err) {
+            if (meta) meta.textContent = "Last order error: " + err;
+            if (body) body.style.display = "none";
+            console.error("Last order fetch failed:", err);
+        } finally {
+            if (!silent && btn) { btn.disabled = false; btn.textContent = "Refresh"; }
         }
     }
 
     document.addEventListener("DOMContentLoaded", function () {
         loadPremarket();
-        refreshLogSnippet();
+        loadOptionChain();
+        loadLastOrder();
+        setInterval(() => loadLastOrder(true), 5000);
         const refreshBtn = document.getElementById("premarket-refresh-btn");
         if (refreshBtn) { refreshBtn.addEventListener("click", loadPremarket); }
-        setInterval(refreshLogSnippet, 5000);
-
+        const ocRefreshBtn = document.getElementById("oc-refresh-btn");
+        if (ocRefreshBtn) { ocRefreshBtn.addEventListener("click", loadOptionChain); }
+        const lastOrderBtn = document.getElementById("last-order-refresh");
+        if (lastOrderBtn) { lastOrderBtn.addEventListener("click", loadLastOrder); }
         // prevent logout beacon on intentional in-app submits/navigation
         document.querySelectorAll('form').forEach(function (form) {
             form.addEventListener('submit', function () {
