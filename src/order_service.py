@@ -291,7 +291,7 @@ def build_order_details_from_signal(
         source = "calendar"
 
     opt_type = "CE" if direction == "LONG_CALL" else "PE"
-    fyers_side = 1 if str(side).lower() == "buy" else -1
+    fyers_side = 1 if str(side).lower() in {"1", "buy", "b"} else -1
 
     order_details = {
         "symbol": selection.symbol,

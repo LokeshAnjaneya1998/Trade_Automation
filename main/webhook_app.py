@@ -382,11 +382,6 @@ def webhook():
             except Exception as exc:
                 logger.error(f"Legacy payload failed to build option: {exc}")
                 return jsonify({"status": "error", "detail": str(exc)}), 500
-        else:
-            if side == "buy":
-                order_details["side"] = 1
-            elif side == "sell":
-                order_details["side"] = -1
 
     
 
