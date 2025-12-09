@@ -2,7 +2,7 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, date, time as dt_time
 from typing import Tuple
 
 import pytz
@@ -19,13 +19,134 @@ IST = pytz.timezone("Asia/Kolkata")
 # Shared trading context
 TRADING_CALENDAR = get_nse_trading_calendar_for_current_year()
 option_chain_service = OptionChainService(symbol="NIFTY")
-
-# Option chain cache
-OPTION_CHAIN_CACHE = {"ts": 0.0, "data": None}
+# Share the same cache object as the OptionChainService class, so premarket and
+# order paths read/write a single source of truth.
+OPTION_CHAIN_CACHE = option_chain_service.CACHE
 _OPTION_CHAIN_LOCK = threading.Lock()
 _OPTION_CHAIN_INFLIGHT = False
 _OPTION_CHAIN_LAST_ERROR_TS = 0.0
 _OPTION_CHAIN_HAD_ERROR = False
+LAST_ORDER = {}
+
+
+# -------------------- Strike helpers --------------------
+
+def round_to_nearest_strike(spot_price: float, step: int = 50) -> int:
+    """
+    Round the given price to the nearest valid strike (NIFTY uses 50-pt steps).
+    Example: 22437.5 -> 22450.
+    """
+    if step <= 0:
+        raise ValueError("step must be > 0")
+    return int(round(spot_price / step) * step)
+
+
+def _is_expiry_trading_day(now_ist: datetime, *, calendar, expiry_weekday: int = 1, after_close: dt_time = dt_time(15, 30)) -> bool:
+    """
+    True if 'now_ist.date()' is the active weekly expiry trading day for NIFTY.
+    """
+    expiry_d = fyers_expiry_for_now(now_ist, calendar=calendar, expiry_weekday=expiry_weekday, after_close=after_close)
+    return calendar.is_trading_day(now_ist.date()) and now_ist.date() == expiry_d
+
+
+def fyers_expiry_for_now(now_ist: datetime, *, calendar, expiry_weekday: int = 1, after_close: dt_time = dt_time(15, 30)) -> date:
+    """
+    Helper to reuse expiry computation in one place.
+    """
+    from src.expiry_utils import next_weekly_expiry_date
+
+    return next_weekly_expiry_date(
+        now_ist,
+        calendar=calendar,
+        expiry_weekday=expiry_weekday,
+        after_close=after_close,
+    )
+
+
+def select_strike(
+    *,
+    spot_price: float,
+    opt_type: str,
+    signal_time: datetime,
+    is_expiry_day: bool,
+    iv_percent: float | None = None,
+    momentum_flag: bool | None = None,
+) -> int:
+    """
+    Select NIFTY strike based on time-of-day, expiry bias, IV and momentum.
+
+    Tiers:
+      - <11:00 -> ATM
+      - 11:00-13:00 -> ATM (upgrade to ITM if strong momentum or high IV)
+      - 13:00-14:30 -> ITM
+      - >14:30 -> Deep ITM
+    Expiry bias:
+      - After 13:00 on expiry -> at least ITM
+      - After 14:30 on expiry -> Deep ITM always
+    IV bias (if available):
+      - IV >= 15 -> upgrade one tier unless early and strong momentum
+      - IV <= 12 -> keep baseline
+    """
+    if opt_type not in {"CE", "PE"}:
+        raise ValueError("opt_type must be 'CE' or 'PE'")
+    if spot_price <= 0:
+        raise ValueError("spot_price must be > 0")
+
+    atm = round_to_nearest_strike(spot_price, 50)
+    if opt_type == "CE":
+        itm = atm - 50
+        deep_itm = atm - 100
+    else:
+        itm = atm + 50
+        deep_itm = atm + 100
+
+    # keep strikes sensible
+    lower_bound = max(0, atm - 800)
+    upper_bound = atm + 800
+
+    def clamp(x: int) -> int:
+        return max(lower_bound, min(upper_bound, x))
+
+    t = signal_time.time()
+    tier = "ATM"
+    if t >= dt_time(14, 30):
+        tier = "DEEP_ITM"
+    elif t >= dt_time(13, 0):
+        tier = "ITM"
+    elif t >= dt_time(11, 0):
+        tier = "ATM_OR_ITM"
+    else:
+        tier = "ATM"
+
+    if is_expiry_day:
+        if t >= dt_time(14, 30):
+            tier = "DEEP_ITM"
+        elif t >= dt_time(13, 0):
+            tier = "ITM"
+
+    # IV and momentum nudges
+    if iv_percent is not None and iv_percent >= 15:
+        if not (t < dt_time(11, 0) and momentum_flag):
+            if tier == "ATM":
+                tier = "ITM"
+            elif tier == "ATM_OR_ITM":
+                tier = "ITM"
+            elif tier == "ITM":
+                tier = "DEEP_ITM"
+
+    if momentum_flag and t < dt_time(13, 0) and not is_expiry_day:
+        tier = "ATM" if tier in {"ATM_OR_ITM", "ATM"} else tier
+
+    if tier == "DEEP_ITM":
+        strike = deep_itm
+    elif tier == "ITM":
+        strike = itm
+    elif tier == "ATM_OR_ITM":
+        strike = itm if (momentum_flag or (iv_percent and iv_percent > 15)) else atm
+    else:
+        strike = atm
+
+    return clamp(strike)
 
 
 # -------------------- Alert parsing --------------------
@@ -59,7 +180,7 @@ def parse_simple_alert(text: str) -> Tuple[str | None, str | None, str | None]:
 
 def _refresh_option_chain_async():
     """
-    Fire-and-forget refresh of NSE option chain. Does not block webhook.
+    Fire-and-forget refresh of option chain (via Fyers). Does not block webhook.
     """
     global _OPTION_CHAIN_INFLIGHT, _OPTION_CHAIN_LAST_ERROR_TS, _OPTION_CHAIN_HAD_ERROR
     with _OPTION_CHAIN_LOCK:
@@ -70,9 +191,7 @@ def _refresh_option_chain_async():
     def _worker():
         global _OPTION_CHAIN_INFLIGHT, _OPTION_CHAIN_LAST_ERROR_TS, _OPTION_CHAIN_HAD_ERROR
         try:
-            data = option_chain_service._fetch_raw()
-            OPTION_CHAIN_CACHE["data"] = data
-            OPTION_CHAIN_CACHE["ts"] = time.time()
+            option_chain_service.refresh_cache()
             if _OPTION_CHAIN_HAD_ERROR:
                 logger.info("Option chain cache refreshed after failure")
                 _OPTION_CHAIN_HAD_ERROR = False
@@ -262,6 +381,22 @@ def select_option_from_chain(
     )
 
 
+def compute_cached_oi_pressure(search_window: float = 200.0):
+    """
+    Compute a lightweight OI snapshot using the cached option chain data.
+    Returns dict with spot, ce_oi_near, pe_oi_near, pressure or None if unavailable.
+    """
+    oc = option_chain_service.compute_oi_pressure()
+    if not oc:
+        return None
+    return {
+        "spot": oc.spot,
+        "ce_oi_near": oc.ce_oi_near,
+        "pe_oi_near": oc.pe_oi_near,
+        "pressure": oc.pressure,
+    }
+
+
 def build_order_details_from_signal(
     fyers_integration,
     direction: str,
@@ -291,6 +426,29 @@ def build_order_details_from_signal(
         source = "calendar"
 
     opt_type = "CE" if direction == "LONG_CALL" else "PE"
+    now_ist = datetime.now(IST)
+    is_expiry_day = selection.expiry_date == now_ist.date()
+    strike_override = select_strike(
+        spot_price=spot_price,
+        opt_type=opt_type,
+        signal_time=now_ist,
+        is_expiry_day=is_expiry_day,
+        iv_percent=None,
+        momentum_flag=None,
+    )
+    if strike_override != selection.strike:
+        selection.strike = strike_override
+        selection.symbol = fyers_nifty_option_symbol(
+            underlying="NIFTY",
+            expiry_d=selection.expiry_date,
+            strike=strike_override,
+            opt_type=opt_type,
+            calendar=TRADING_CALENDAR,
+            expiry_weekday=1,
+            exchange_prefix="NSE:",
+        )
+        selection.notes += f" | strike_override={strike_override}"
+
     fyers_side = 1 if str(side).lower() in {"1", "buy", "b"} else -1
 
     order_details = {
@@ -310,7 +468,9 @@ def build_order_details_from_signal(
         "optStrike": str(selection.strike),
     }
 
-    return order_details, f"{selection.notes} | source={source}"
+    note = f"{selection.notes} | source={source}"
+    record_last_order(note, order_details, mode=setup_type)
+    return order_details, note
 
 
 # -------------------- Order placement --------------------
@@ -333,3 +493,18 @@ def dispatch_order(fyers_integration, order_details):
         target=lambda: place_order(fyers_integration, order_details),
         daemon=True,
     ).start()
+
+
+# -------------------- Last order tracking --------------------
+
+def record_last_order(note: str, order_details: dict, mode: str = ""):
+    LAST_ORDER.update({
+        "note": note,
+        "order_details": order_details,
+        "mode": mode,
+        "ts": time.time(),
+    })
+
+
+def get_last_order():
+    return LAST_ORDER if LAST_ORDER else None

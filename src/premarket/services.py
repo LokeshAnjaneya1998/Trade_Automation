@@ -1,18 +1,18 @@
 # src/premarket/services.py
 
 import datetime as dt
+import logging
+import time
 from typing import Dict, Optional
 
-import logging
 import pandas as pd
 import pytz
-import requests
 from fyers_apiv3 import fyersModel
 
-from .models import (
-    NiftyRegime,
-    OIPressure,
-)
+from .models import NiftyRegime, OIPressure
+from src.calendar_loader import get_nse_trading_calendar_for_current_year
+from src.expiry_utils import fyers_nifty_option_symbol, next_weekly_expiry_date
+from src.fyers_integration import FyersIntegration
 
 IST = pytz.timezone("Asia/Kolkata")
 logger = logging.getLogger(__name__)
@@ -181,64 +181,146 @@ class FyersMarketDataService:
             gap_type=gap_type,
         )
 
+
 # ============================================================
-# 2) Option Chain Service (NSE API)
+# 2) Option Chain Service (Fyers-based)
 # ============================================================
+
 
 class OptionChainService:
     """
-    pull NSE option chain for OI skew
+    Pull NIFTY option chain using Fyers quotes (no NSE scraping).
+    Builds a synthetic NSE-like structure and caches it for reuse.
     """
 
     CACHE = {"ts": 0.0, "data": None}
     CACHE_TTL = 20  # seconds
+    LAST_RESULT: Optional[OIPressure] = None  # keep last good snapshot
 
-    NSE_BASE = "https://www.nseindia.com"
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "application/json, text/plain, */*",
-    }
-
-    def __init__(self, symbol: str = "NIFTY"):
+    def __init__(self, symbol: str = "NIFTY", fyers_integration=None):
         self.symbol = symbol
+        self.fyers_integration = fyers_integration or FyersIntegration()
+        self.calendar = get_nse_trading_calendar_for_current_year()
 
-    def _fetch_raw(self, max_age_sec: int | None = None):
-        session = requests.Session()
-        session.headers.update(self.HEADERS)
-        _ = session.get(self.NSE_BASE, timeout=10)
+    def _get_fyers(self):
+        return self.fyers_integration.get_fyers_instance()
 
-        url = f"{self.NSE_BASE}/api/option-chain-indices?symbol={self.symbol}"
-        resp = session.get(url, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
+    def _fetch_chain_from_fyers(self, window: int = 200, step: int = 50) -> dict:
+        fyers = self._get_fyers()
+        logging.getLogger("FyersAPIRequest").setLevel(logging.WARNING)
+
+        # Spot
+        spot_resp = fyers.quotes({"symbols": f"NSE:{self.symbol}50-INDEX"})
+        if spot_resp.get("s") != "ok":
+            raise RuntimeError(f"Fyers quotes failed for spot: {spot_resp}")
+        spot_data = (spot_resp.get("d") or [{}])[0].get("v", {})
+        spot = float(spot_data.get("lp"))
+
+        # Expiry
+        now_ist = dt.datetime.now(IST)
+        expiry_d = next_weekly_expiry_date(
+            now_ist,
+            calendar=self.calendar,
+            expiry_weekday=1,
+        )
+        expiry_str = expiry_d.strftime("%d-%b-%Y")
+
+        # Strikes
+        atm = int(round(spot / step) * step)
+        strikes = list(range(atm - window, atm + window + step, step))
+
+        symbols = []
+        for strike in strikes:
+            for opt in ("CE", "PE"):
+                symbols.append(
+                    fyers_nifty_option_symbol(
+                        underlying=self.symbol,
+                        expiry_d=expiry_d,
+                        strike=strike,
+                        opt_type=opt,
+                        calendar=self.calendar,
+                        expiry_weekday=1,
+                        exchange_prefix="NSE:",
+                    )
+                )
+
+        quotes_resp = fyers.quotes({"symbols": ",".join(symbols)})
+        if quotes_resp.get("s") != "ok":
+            raise RuntimeError(f"Fyers quotes failed for chain: {quotes_resp}")
+
+        quotes = {item.get("n"): item.get("v", {}) for item in quotes_resp.get("d", [])}
+
+        def _leg(symbol: str):
+            v = quotes.get(symbol, {}) or {}
+            return {
+                "openInterest": v.get("oi") or v.get("open_interest") or 0,
+                "totalTradedVolume": v.get("volume") or v.get("vol_traded_today") or 0,
+                "lastPrice": v.get("lp") or 0,
+            }
+
+        rows = []
+        for strike in strikes:
+            row = {"strikePrice": strike, "underlyingValue": spot}
+            ce_sym = fyers_nifty_option_symbol(
+                underlying=self.symbol,
+                expiry_d=expiry_d,
+                strike=strike,
+                opt_type="CE",
+                calendar=self.calendar,
+                expiry_weekday=1,
+                exchange_prefix="NSE:",
+            )
+            pe_sym = ce_sym.replace("CE", "PE")
+            row["CE"] = _leg(ce_sym)
+            row["PE"] = _leg(pe_sym)
+            rows.append(row)
+
+        payload = {
+            "records": {
+                "underlyingValue": spot,
+                "data": rows,
+                "expiryDates": [expiry_str],
+            },
+            "filtered": {
+                "data": rows,
+                "expiryDate": expiry_str,
+            },
+        }
+        return payload
 
     def _fetch_with_cache(self) -> Optional[dict]:
         now = time.time()
         if self.CACHE["data"] and (now - self.CACHE["ts"]) <= self.CACHE_TTL:
             return self.CACHE["data"]
         try:
-            raw = self._fetch_raw()
-            self.CACHE = {"ts": now, "data": raw}
+            raw = self._fetch_chain_from_fyers()
+            self.CACHE["ts"] = now
+            self.CACHE["data"] = raw
+            logger.debug("Option chain cache refreshed from Fyers")
             return raw
-        except Exception:
-            # do not overwrite cache on failure
+        except Exception as exc:
+            logger.warning("Option chain fetch failed (Fyers): %s", exc)
             return self.CACHE["data"]
 
+    def refresh_cache(self):
+        """Explicit refresh for background timers."""
+        data = self._fetch_chain_from_fyers()
+        self.CACHE["ts"] = time.time()
+        self.CACHE["data"] = data
+        logger.debug("Option chain cache refreshed from Fyers")
+
     def compute_oi_pressure(self) -> Optional[OIPressure]:
-        try:
-            data = self._fetch_with_cache()
-        except Exception:
-            logger.warning("Option chain fetch failed; returning None")
-            return None
+        data = self._fetch_with_cache()
+        if not data:
+            return self.LAST_RESULT
 
+        records = (data.get("records", {}) or {}).get("data", []) or []
         underlying = data.get("records", {}).get("underlyingValue")
-        if not underlying:
-            logger.warning("Option chain missing underlying value; returning None")
-            return None
-
-        underlying = float(underlying)
-        records = data.get("records", {}).get("data", [])
+        if underlying is None:
+            if self.LAST_RESULT:
+                underlying = self.LAST_RESULT.spot
+            else:
+                return self.LAST_RESULT
 
         ce_oi = 0
         pe_oi = 0
@@ -247,7 +329,7 @@ class OptionChainService:
             strike = row.get("strikePrice")
             if strike is None:
                 continue
-            if abs(float(strike) - underlying) <= 200:
+            if abs(float(strike) - float(underlying)) <= 200:
                 ce = row.get("CE")
                 pe = row.get("PE")
                 if ce:
@@ -263,12 +345,13 @@ class OptionChainService:
             skew = "Balanced OI"
 
         logger.info(
-            f"OI pressure: spot={underlying}, ce_oi_near={ce_oi}, pe_oi_near={pe_oi}, pressure={skew}"
+            f"OI pressure (Fyers): spot={underlying}, ce_oi_near={ce_oi}, pe_oi_near={pe_oi}, pressure={skew}"
         )
 
-        return OIPressure(
-            spot=underlying,
+        self.LAST_RESULT = OIPressure(
+            spot=float(underlying),
             ce_oi_near=ce_oi,
             pe_oi_near=pe_oi,
             pressure=skew,
         )
+        return self.LAST_RESULT

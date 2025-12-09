@@ -30,6 +30,8 @@ from src.order_service import (
     parse_simple_alert,
     build_order_details_from_signal,
     dispatch_order,
+    compute_cached_oi_pressure,
+    get_last_order,
 )
 
 
@@ -495,6 +497,30 @@ def premarket_summary():
         logger.error(f"Premarket analysis failed: {exc}")
         return jsonify({"error": "Premarket analysis failed", "detail": str(exc)}), 503
 
+    return jsonify(data), 200
+
+
+@app.route("/api/optionchain/summary", methods=["GET"])
+@login_required
+def optionchain_summary():
+    """
+    Lightweight option chain snapshot for the dashboard.
+    """
+    oc = compute_cached_oi_pressure()
+    if not oc:
+        return jsonify({"error": "No option chain data"}), 503
+    return jsonify(oc), 200
+
+
+@app.route("/api/last_order", methods=["GET"])
+@login_required
+def last_order():
+    """
+    Returns the most recent built order + note for dashboard display.
+    """
+    data = get_last_order()
+    if not data:
+        return jsonify({"error": "No orders yet"}), 404
     return jsonify(data), 200
 
 
