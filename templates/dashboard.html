@@ -39,8 +39,8 @@
         .status-enabled .status-dot { background: var(--success); }
         .status-paused { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.4); }
         .status-paused .status-dot { background: var(--danger); }
-        .grid { display: grid; grid-template-columns: 360px 1fr; gap: 14px; align-items: start; }
-        .col-left { display: flex; flex-direction: column; gap: 14px; }
+        .grid { display: grid; grid-template-columns: 340px 1fr 340px; gap: 14px; align-items: start; }
+        .col-left, .col-mid, .col-right { display: flex; flex-direction: column; gap: 14px; }
         .card { background: var(--card-bg); border-radius: 14px; border: 1px solid var(--border-subtle); padding: 16px 18px 18px 18px; box-shadow: 0 18px 36px rgba(0, 0, 0, 0.45); }
         .card h2 { margin: 0 0 10px 0; font-size: 1rem; }
         .controls-card { display: flex; flex-direction: column; align-self: flex-start; }
@@ -51,7 +51,7 @@
         .btn-blue:hover { background: rgba(59, 130, 246, 0.3); }
         .btn-green { background: rgba(34, 197, 94, 0.18); border-color: rgba(34, 197, 94, 0.6); color: #bbf7d0; }
         .btn-red { background: rgba(239, 68, 68, 0.15); border-color: rgba(239, 68, 68, 0.7); color: #fecaca; }
-        .btn-white { background: rgba(155, 190, 171, 1); border-color: rgba(238, 243, 244, 0.99); color: #faf8f8ff; }
+        .btn-white { background: rgba(155, 190, 171, 1); border-color: rgba(238, 243, 244, 0.99); color: #faf8f8; }
         .btn-yellow { background: rgba(159, 157, 107, 1); border-color: rgba(205, 244, 122, 1); color: #dbeafe; }
         .section-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
         .meta { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 10px; }
@@ -87,42 +87,27 @@
 
     <div class="grid">
         <div class="col-left">
-            <div class="card controls-card">
+            <div class="card controls-card" style="width: 100%;">
                 <h2 style="margin-top:0;">Bot Controls</h2>
                 <div class="stack">
-                    
-                    <form method="POST" action="{{ url_for('pause_trading') }}">
+                    <form method="POST" action="{{ url_for('pause_trading') }}" class="needs-confirm" data-confirm="Pause trading?">
                         <input type="hidden" name="token" value="{{ admin_token }}">
-                        <button type="submit" class="btn btn-red">⏸ Pause trading</button>
+                        <button type="submit" class="btn btn-red">Pause trading</button>
                     </form>
-                    <form method="POST" action="{{ url_for('resume_trading') }}">
+                    <form method="POST" action="{{ url_for('resume_trading') }}" class="needs-confirm" data-confirm="Resume trading?">
                         <input type="hidden" name="token" value="{{ admin_token }}">
-                        <button type="submit" class="btn btn-green">▶ Resume trading</button>
+                        <button type="submit" class="btn btn-green">Resume trading</button>
                     </form>
-                    <form method="POST" action="{{ url_for('restart_service') }}">
+                    <form method="POST" action="{{ url_for('restart_service') }}" class="needs-confirm" data-confirm="Restart the bot?">
                         <input type="hidden" name="token" value="{{ admin_token }}">
-                        <button type="submit" class="btn btn-white">⟳ Restart bot</button>
+                        <button type="submit" class="btn btn-white">Restart bot</button>
                     </form>
                     {% if auth_url %}
-                    <button type="button" class="btn btn-blue" onclick="window.open('{{ auth_url }}', '_blank');">🔗 Authentication link</button>
+                    <button type="button" class="btn btn-blue" onclick="window.open('{{ auth_url }}', '_blank');">Authentication link</button>
                     {% else %}
-                    <button type="button" class="btn btn-blue" disabled>🔗 Authentication link (not yet available)</button>
+                    <button type="button" class="btn btn-blue" disabled>Authentication link (not yet available)</button>
                     {% endif %}
-                    <button type="button" class="btn btn-yellow" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">📜 Recent logs (full page)</button>
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="section-header">
-                    <div><h2 style="margin:0;">Option Chain Snapshot – NIFTY</h2></div>
-                    <button type="button" class="btn btn-blue" id="oc-refresh-btn" style="width:auto; white-space:nowrap;">Refresh</button>
-                </div>
-                <div id="oc-meta" class="meta">Loading option chain...</div>
-                <div id="oc-body" style="display:none; flex-direction:column; gap:6px;">
-                    <div><strong>Spot:</strong> <span id="oc-spot"></span></div>
-                    <div><strong>CE OI (±200):</strong> <span id="oc-ce"></span></div>
-                    <div><strong>PE OI (±200):</strong> <span id="oc-pe"></span></div>
-                    <div><strong>Skew:</strong> <span id="oc-pressure"></span></div>
+                    <button type="button" class="btn btn-yellow" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">Recent logs (full page)</button>
                 </div>
             </div>
 
@@ -144,16 +129,48 @@
             </div>
         </div>
 
-        <div class="card">
-            <div class="section-header">
-                <div><h2 style="margin:0;">Premarket ORB Checklist NIFTY 50</h2></div>
-                <button type="button" class="btn btn-blue" id="premarket-refresh-btn" style="width:auto; white-space:nowrap;">⟳ Refresh</button>
+        <div class="col-mid">
+            <div class="card">
+                <div class="section-header">
+                    <div><h2 style="margin:0;">System Health</h2></div>
+                    <button type="button" class="btn btn-blue" id="health-refresh" style="width:auto; white-space:nowrap;">Refresh</button>
+                </div>
+                <div id="health-meta" class="meta">Loading health...</div>
+                <div id="health-body" style="display:none; flex-direction:column; gap:6px;">
+                    <div><strong>Trading:</strong> <span id="health-trading"></span></div>
+                    <div><strong>Fyers Auth:</strong> <span id="health-auth"></span></div>
+                    <div><strong>OC cache age:</strong> <span id="health-oc-age"></span></div>
+                    <div><strong>Fyers ID:</strong> <span id="health-fyid"></span></div>
+                    <div><strong>Name:</strong> <span id="health-name"></span></div>
+                    <div><strong>Balance:</strong> <span id="health-balance"></span></div>
+                    <div><strong>Open Orders:</strong> <span id="health-open-orders"></span></div>
+                    <div><strong>Closed Orders:</strong> <span id="health-closed-orders"></span></div>
+                    <div><strong>P&L:</strong> <span id="health-pnl"></span></div>
+                </div>
             </div>
-            <div id="premarket-meta" class="meta">Loading premarket data...</div>
-            <h3 style="margin: 10px 0 6px 0;">Checkpoints</h3>
-            <div id="premarket-checkpoints" style="display:flex; flex-direction:column; gap:6px;"></div>
-            <h3 style="margin: 14px 0 6px 0;">Suggestions</h3>
-            <div id="premarket-suggestions" style="display:flex; flex-direction:column; gap:6px;"></div>
+
+            <div class="card">
+                <div class="section-header">
+                    <div><h2 style="margin:0;">Premarket ORB Checklist NIFTY 50</h2></div>
+                    <button type="button" class="btn btn-blue" id="premarket-refresh-btn" style="width:auto; white-space:nowrap;">Refresh</button>
+                </div>
+                <div id="premarket-meta" class="meta">Loading premarket data...</div>
+                <h3 style="margin: 10px 0 6px 0;">Checkpoints</h3>
+                <div id="premarket-checkpoints" style="display:flex; flex-direction:column; gap:6px;"></div>
+                <h3 style="margin: 14px 0 6px 0;">Suggestions</h3>
+                <div id="premarket-suggestions" style="display:flex; flex-direction:column; gap:6px;"></div>
+            </div>
+        </div>
+
+        <div class="col-right">
+            <div class="card">
+                <div class="section-header">
+                    <div><h2 style="margin:0;">Recent Orders</h2></div>
+                    <button type="button" class="btn btn-blue" id="recent-refresh" style="width:auto; white-space:nowrap;">Refresh</button>
+                </div>
+                <div id="recent-meta" class="meta">Loading recent orders...</div>
+                <div id="recent-body" style="display:none; flex-direction:column; gap:6px;"></div>
+            </div>
         </div>
     </div>
 </div>
@@ -174,9 +191,9 @@
         }
     }
 
-    async function loadPremarket() {
+    async function loadPremarket(silent = false) {
         const btn = document.getElementById("premarket-refresh-btn");
-        if (btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
+        if (!silent && btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
         try {
             const res = await fetch("{{ url_for('premarket_summary') }}");
             const data = await res.json();
@@ -229,36 +246,7 @@
             if (metaEl) metaEl.textContent = "Error loading premarket data: " + err;
             console.error("Premarket fetch failed:", err);
         } finally {
-            if (btn) { btn.disabled = false; btn.textContent = "⟳ Refresh"; }
-        }
-    }
-
-    async function loadOptionChain() {
-        const btn = document.getElementById("oc-refresh-btn");
-        const meta = document.getElementById("oc-meta");
-        const body = document.getElementById("oc-body");
-        if (btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
-        try {
-            const res = await fetch("{{ url_for('optionchain_summary') }}");
-            const data = await res.json();
-            if (!res.ok || data.error) {
-                const detail = data.detail || data.error || res.statusText || "Unknown error";
-                if (meta) meta.textContent = "Option chain unavailable: " + detail;
-                if (body) body.style.display = "none";
-                return;
-            }
-            if (meta) meta.textContent = "";
-            if (body) body.style.display = "flex";
-            document.getElementById("oc-spot").textContent = data.spot;
-            document.getElementById("oc-ce").textContent = data.ce_oi_near;
-            document.getElementById("oc-pe").textContent = data.pe_oi_near;
-            document.getElementById("oc-pressure").textContent = data.pressure;
-        } catch (err) {
-            if (meta) meta.textContent = "Option chain error: " + err;
-            if (body) body.style.display = "none";
-            console.error("Option chain fetch failed:", err);
-        } finally {
-            if (btn) { btn.disabled = false; btn.textContent = "Refresh"; }
+            if (!silent && btn) { btn.disabled = false; btn.textContent = "Refresh"; }
         }
     }
 
@@ -299,20 +287,111 @@
         }
     }
 
+    async function loadHealth(silent = false) {
+        const btn = document.getElementById("health-refresh");
+        const meta = document.getElementById("health-meta");
+        const body = document.getElementById("health-body");
+        if (!silent && btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
+        try {
+            const res = await fetch("{{ url_for('health') }}");
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                const detail = data.detail || data.error || res.statusText || "Unknown error";
+                if (meta) meta.textContent = "Health unavailable: " + detail;
+                if (body) body.style.display = "none";
+                return;
+            }
+            if (meta) meta.textContent = "";
+            if (body) body.style.display = "flex";
+            document.getElementById("health-trading").textContent = data.trading_enabled ? "ENABLED" : "PAUSED";
+            document.getElementById("health-auth").textContent = data.fyers_auth;
+            const age = data.option_chain && data.option_chain.age_sec;
+            const ts = data.option_chain && data.option_chain.last_refresh_ts;
+            const ageText = age ? `${age.toFixed(1)}s` : "N/A";
+            document.getElementById("health-oc-age").textContent = `${ageText}${ts ? ` (ts=${new Date(ts * 1000).toLocaleTimeString()})` : ""}`;
+            const profile = data.profile || {};
+            document.getElementById("health-fyid").textContent = profile.fy_id || "";
+            document.getElementById("health-name").textContent = profile.name || "";
+            document.getElementById("health-balance").textContent = profile.balance ?? "";
+            document.getElementById("health-open-orders").textContent = profile.open_orders ?? "";
+            document.getElementById("health-closed-orders").textContent = profile.closed_orders ?? "";
+            document.getElementById("health-pnl").textContent = profile.pnl ?? "";
+        } catch (err) {
+            if (meta) meta.textContent = "Health error: " + err;
+            if (body) body.style.display = "none";
+            console.error("Health fetch failed:", err);
+        } finally {
+            if (!silent && btn) { btn.disabled = false; btn.textContent = "Refresh"; }
+        }
+    }
+
+    async function loadRecentOrders(silent = false) {
+        const btn = document.getElementById("recent-refresh");
+        const meta = document.getElementById("recent-meta");
+        const body = document.getElementById("recent-body");
+        if (!silent && btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
+        try {
+            const res = await fetch("{{ url_for('recent_orders') }}");
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                const detail = data.detail || data.error || res.statusText || "Unknown error";
+                if (meta) meta.textContent = "Recent orders unavailable: " + detail;
+                if (body) body.style.display = "none";
+                return;
+            }
+            const orders = data.orders || [];
+            if (meta) meta.textContent = orders.length ? "" : "No orders yet";
+            if (body) {
+                body.style.display = orders.length ? "flex" : "none";
+                body.innerHTML = "";
+                orders.forEach(o => {
+                    const od = o.order_details || {};
+                    const div = document.createElement("div");
+                    div.className = "checkpoint-item";
+                    const ts = o.ts ? new Date(o.ts * 1000).toLocaleString() : "";
+                    div.innerHTML = `
+                        <div class="checkpoint-title">${od.symbol || "N/A"} <span class="checkpoint-badge INFO">${od.side || ""}</span></div>
+                        <div>Note: ${o.note || ""}</div>
+                        <div>Qty: ${od.qty || ""} | Strike: ${od.optStrike || ""} | Mode: ${o.mode || ""} | When: ${ts}</div>
+                    `;
+                    body.appendChild(div);
+                });
+            }
+        } catch (err) {
+            if (meta) meta.textContent = "Recent orders error: " + err;
+            if (body) body.style.display = "none";
+            console.error("Recent orders fetch failed:", err);
+        } finally {
+            if (!silent && btn) { btn.disabled = false; btn.textContent = "Refresh"; }
+        }
+    }
+
     document.addEventListener("DOMContentLoaded", function () {
         loadPremarket();
-        loadOptionChain();
         loadLastOrder();
-        setInterval(() => loadLastOrder(true), 5000);
+        loadHealth();
+        loadRecentOrders();
+        // lightweight polling to approximate real-time updates
+        setInterval(() => loadLastOrder(true), 4000);
+        setInterval(() => loadRecentOrders(true), 6000);
+        setInterval(() => loadHealth(true), 8000);
+        // premarket left manual+initial load only to avoid noisy logs
         const refreshBtn = document.getElementById("premarket-refresh-btn");
         if (refreshBtn) { refreshBtn.addEventListener("click", loadPremarket); }
-        const ocRefreshBtn = document.getElementById("oc-refresh-btn");
-        if (ocRefreshBtn) { ocRefreshBtn.addEventListener("click", loadOptionChain); }
         const lastOrderBtn = document.getElementById("last-order-refresh");
         if (lastOrderBtn) { lastOrderBtn.addEventListener("click", loadLastOrder); }
-        // prevent logout beacon on intentional in-app submits/navigation
-        document.querySelectorAll('form').forEach(function (form) {
-            form.addEventListener('submit', function () {
+        const healthBtn = document.getElementById("health-refresh");
+        if (healthBtn) { healthBtn.addEventListener("click", () => loadHealth()); }
+        const recentBtn = document.getElementById("recent-refresh");
+        if (recentBtn) { recentBtn.addEventListener("click", () => loadRecentOrders()); }
+        // confirm dialogs for critical actions
+        document.querySelectorAll('form.needs-confirm').forEach(function (form) {
+            form.addEventListener('submit', function (e) {
+                const msg = form.getAttribute('data-confirm') || 'Are you sure?';
+                if (!confirm(msg)) {
+                    e.preventDefault();
+                    return false;
+                }
                 skipLogout = true;
                 setTimeout(() => { skipLogout = false; }, 2000);
             });

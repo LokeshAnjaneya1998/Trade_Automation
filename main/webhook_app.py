@@ -32,6 +32,9 @@ from src.order_service import (
     dispatch_order,
     compute_cached_oi_pressure,
     get_last_order,
+    get_recent_orders,
+    get_option_chain_cache_info,
+    get_profile_snapshot,
 )
 
 
@@ -522,6 +525,36 @@ def last_order():
     if not data:
         return jsonify({"error": "No orders yet"}), 404
     return jsonify(data), 200
+
+
+@app.route("/api/recent_orders", methods=["GET"])
+@login_required
+def recent_orders():
+    """
+    Returns recent built orders (up to 5) for dashboard.
+    """
+    orders = get_recent_orders()
+    return jsonify({"orders": orders}), 200
+
+
+@app.route("/api/health", methods=["GET"])
+@login_required
+def health():
+    """
+    Surface basic health: trading toggle, fyers token presence, option chain cache age.
+    """
+    oc_info = get_option_chain_cache_info()
+    token_present = bool(config.access_token)
+    try:
+        profile = get_profile_snapshot(fyers_integration)
+    except Exception as exc:
+        profile = {"error": str(exc)}
+    return jsonify({
+        "trading_enabled": TRADING_ENABLED,
+        "fyers_auth": "present" if token_present else "missing",
+        "option_chain": oc_info,
+        "profile": profile,
+    }), 200
 
 
 # ──────────────────────────────────────────────────────────────
