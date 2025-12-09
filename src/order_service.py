@@ -3,6 +3,7 @@ import os
 import threading
 import time
 from datetime import datetime, date, time as dt_time
+from collections import deque
 from typing import Tuple
 
 import pytz
@@ -27,6 +28,8 @@ _OPTION_CHAIN_INFLIGHT = False
 _OPTION_CHAIN_LAST_ERROR_TS = 0.0
 _OPTION_CHAIN_HAD_ERROR = False
 LAST_ORDER = {}
+LAST_ORDERS = deque(maxlen=5)
+PROFILE_CACHE = {"ts": 0.0, "data": None}
 
 
 # -------------------- Strike helpers --------------------
@@ -498,13 +501,125 @@ def dispatch_order(fyers_integration, order_details):
 # -------------------- Last order tracking --------------------
 
 def record_last_order(note: str, order_details: dict, mode: str = ""):
-    LAST_ORDER.update({
+    entry = {
         "note": note,
         "order_details": order_details,
         "mode": mode,
         "ts": time.time(),
-    })
+    }
+    LAST_ORDER.update(entry)
+    LAST_ORDERS.appendleft(entry)
 
 
 def get_last_order():
     return LAST_ORDER if LAST_ORDER else None
+
+
+def get_recent_orders():
+    return list(LAST_ORDERS)
+
+
+def get_option_chain_cache_info():
+    """
+    Returns cache age/status for option chain.
+    """
+    ts = OPTION_CHAIN_CACHE.get("ts") or 0
+    data_present = OPTION_CHAIN_CACHE.get("data") is not None
+    age = time.time() - ts if ts else None
+    return {
+        "has_data": data_present,
+        "last_refresh_ts": ts,
+        "age_sec": age,
+    }
+
+
+def get_profile_snapshot(fyers_integration):
+    """
+    Pull lightweight profile/funds/positions/orders summary from Fyers.
+    """
+    now = time.time()
+    if PROFILE_CACHE["data"] and (now - PROFILE_CACHE["ts"]) <= 15:
+        return PROFILE_CACHE["data"]
+
+    fy = fyers_integration.get_fyers_instance()
+    def _unwrap(resp):
+        if not resp:
+            return {}
+        if isinstance(resp, dict):
+            if "data" in resp and isinstance(resp.get("data"), dict):
+                return resp.get("data")
+            if "d" in resp and isinstance(resp.get("d"), dict):
+                return resp.get("d")
+        return resp
+
+    def _first_dict(val):
+        if isinstance(val, list):
+            return val[0] if val else {}
+        return val if isinstance(val, dict) else {}
+
+    profile = {}
+    funds = {}
+    positions = {}
+    orders = {}
+    try:
+        profile = _unwrap(fy.get_profile() or {})
+    except Exception as exc:
+        logger.debug("Profile fetch failed: %s", exc)
+    try:
+        funds = _unwrap(fy.funds() or {})
+    except Exception as exc:
+        logger.debug("Funds fetch failed: %s", exc)
+    try:
+        positions = _unwrap(fy.positions() or {})
+    except Exception as exc:
+        logger.debug("Positions fetch failed: %s", exc)
+    try:
+        orders = _unwrap(fy.orderbook() or {})
+    except Exception as exc:
+        logger.debug("Orderbook fetch failed: %s", exc)
+
+    fy_id = profile.get("fy_id") or profile.get("id") or profile.get("client_id") or "N/A"
+    name = profile.get("name") or profile.get("display_name") or profile.get("clientName") or "N/A"
+
+    # Funds: attempt equity/available balance
+    balance = None
+    fl = _first_dict(funds.get("fund_limit") or funds.get("fundLimit") or funds)
+    balance = (
+        fl.get("equityAmount")
+        or fl.get("totalBalance")
+        or fl.get("AvailableBalance")
+        or fl.get("available_balance")
+        or fl.get("opening_balance")
+    )
+    balance = balance if balance is not None else "N/A"
+
+    net_positions = (
+        positions.get("netPositions")
+        or positions.get("net_positions")
+        or positions.get("overall")
+        or []
+    )
+    open_positions = len(net_positions)
+    pnl = 0.0
+    for p in net_positions:
+        try:
+            pnl += float(p.get("overallPnl") or p.get("pnl") or p.get("pl") or 0)
+        except Exception:
+            continue
+
+    ob = orders.get("orderBook") or orders.get("order_book") or []
+    open_orders = sum(1 for o in ob if str(o.get("status")) in {"6", "open", "pending"})
+    closed_orders = sum(1 for o in ob if str(o.get("status")) in {"2", "completed", "complete", "filled"})
+
+    data = {
+        "fy_id": fy_id,
+        "name": name,
+        "balance": balance,
+        "open_orders": open_orders,
+        "closed_orders": closed_orders,
+        "pnl": pnl,
+    }
+
+    PROFILE_CACHE["data"] = data
+    PROFILE_CACHE["ts"] = now
+    return data

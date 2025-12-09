@@ -35,7 +35,7 @@
 </head>
 <body>
     <h2>Recent logs - Latest 200</h2>
-    <div class="log-container">
+    <div id="log-stream" class="log-container">
         {% if lines %}
             {% for line in lines %}
                 <div class="log-line">{{ line|safe }}</div>
@@ -45,5 +45,23 @@
             <div class="log-line">No logs yet.</div>
         {% endif %}
     </div>
+
+    <script>
+        async function refreshLogs() {
+            try {
+                const res = await fetch("{{ url_for('logs_snippet') }}", { cache: "no-store" });
+                if (!res.ok) return;
+                const html = await res.text();
+                const target = document.getElementById("log-stream");
+                if (target) {
+                    target.innerHTML = html;
+                }
+            } catch (err) {
+                console.error("Log refresh failed", err);
+            }
+        }
+        // lightweight polling to approximate realtime updates
+        setInterval(refreshLogs, 4000);
+    </script>
 </body>
 </html>
