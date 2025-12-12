@@ -299,8 +299,7 @@ def logs_snippet():
     body_lines = [f'<div class="log-line">{linkify(line)}</div>' for line in lines] if lines else ['<div class="log-line">No logs yet.</div>']
     sep = '<div class="log-separator"></div>'
     html_body = sep.join(body_lines)
-    payload = f'<div class="log-container">{html_body}</div>'
-    return app.response_class(payload, mimetype="text/html")
+    return app.response_class(html_body, mimetype="text/html")
 
 
 # ──────────────────────────────────────────────────────────────
