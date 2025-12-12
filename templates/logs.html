@@ -43,14 +43,16 @@
 <body>
     <h2>Recent logs - Latest 200</h2>
     <div id="log-stream" class="log-container">
-        {% if lines %}
-            {% for line in lines %}
-                <div class="log-line">{{ line|safe }}</div>
-                {% if not loop.last %}<div class="log-separator"></div>{% endif %}
-            {% endfor %}
-        {% else %}
-            <div class="log-line">No logs yet.</div>
-        {% endif %}
+        <div id="log-body">
+            {% if lines %}
+                {% for line in lines %}
+                    <div class="log-line">{{ line|safe }}</div>
+                    {% if not loop.last %}<div class="log-separator"></div>{% endif %}
+                {% endfor %}
+            {% else %}
+                <div class="log-line">No logs yet.</div>
+            {% endif %}
+        </div>
     </div>
 
     <script>
@@ -59,7 +61,7 @@
                 const res = await fetch("{{ url_for('logs_snippet') }}", { cache: "no-store" });
                 if (!res.ok) return;
                 const html = await res.text();
-                const target = document.getElementById("log-stream");
+                const target = document.getElementById("log-body");
                 if (target) {
                     target.innerHTML = html;
                 }
