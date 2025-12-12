@@ -497,8 +497,12 @@ def premarket_summary():
             "action": "Authenticate with Fyers to generate an access token, then retry."
         }), 428
     except Exception as exc:
-        logger.error(f"Premarket analysis failed: {exc}")
-        return jsonify({"error": "Premarket analysis failed", "detail": str(exc)}), 503
+        msg = str(exc)
+        if "throttle" in msg.lower() or "429" in msg:
+            logger.warning(f"Premarket analysis throttled: {exc}")
+        else:
+            logger.error(f"Premarket analysis failed: {exc}")
+        return jsonify({"error": "Premarket analysis failed", "detail": msg}), 503
 
     return jsonify(data), 200
 
