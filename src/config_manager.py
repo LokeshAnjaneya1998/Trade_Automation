@@ -37,7 +37,7 @@ class ConfigManager:
     def _load_config(self) -> AppConfig:
         if not self._path.exists():
             raise FileNotFoundError(
-                f"Config file not found at {self._path}. Create it before running."
+                f"Config file not found . Create it before running."
             )
 
         with open(self._path, "r", encoding="utf-8") as f:
@@ -58,7 +58,7 @@ class ConfigManager:
             auth_code=data.get("auth_code", ""),
             web_login=web_login,
         )
-        logger.debug("Loaded config from %s", self._path)
+        logger.debug("Loaded config")
         return cfg
 
     def save_config(self, config: Optional[AppConfig] = None) -> None:
@@ -70,4 +70,4 @@ class ConfigManager:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
-        logger.info("Saved config to %s", self._path)
+        logger.info("Saved config")

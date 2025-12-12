@@ -41,7 +41,9 @@
     </style>
 </head>
 <body>
-    <h2>Recent logs - Latest 200</h2>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+        <h2 style="margin:0;">Recent logs - Latest 200</h2>
+    </div>
     <div id="log-stream" class="log-container">
         <div id="log-body">
             {% if lines %}
@@ -56,21 +58,36 @@
     </div>
 
     <script>
-        async function refreshLogs() {
-            try {
-                const res = await fetch("{{ url_for('logs_snippet') }}", { cache: "no-store" });
-                if (!res.ok) return;
-                const html = await res.text();
-                const target = document.getElementById("log-body");
-                if (target) {
-                    target.innerHTML = html;
+        function startStream() {
+            const target = document.getElementById("log-body");
+            if (!target) return;
+            const evtSource = new EventSource("{{ url_for('logs_stream') }}");
+            evtSource.onmessage = function (event) {
+                const lineDiv = document.createElement("div");
+                lineDiv.className = "log-line";
+                lineDiv.innerHTML = event.data;
+                const sep = document.createElement("div");
+                sep.className = "log-separator";
+
+                const atBottom = Math.abs((target.scrollHeight - target.clientHeight) - target.scrollTop) < 10;
+                target.appendChild(lineDiv);
+                target.appendChild(sep);
+
+                // keep to latest ~200 lines (line+sep counts as 2 nodes)
+                while (target.childElementCount > 400) {
+                    target.removeChild(target.firstChild);
                 }
-            } catch (err) {
-                console.error("Log refresh failed", err);
-            }
+
+                if (atBottom) {
+                    target.scrollTop = target.scrollHeight;
+                }
+            };
+            evtSource.onerror = function (err) {
+                console.warn("Log stream error", err);
+            };
         }
-        // lightweight polling to approximate realtime updates
-        setInterval(refreshLogs, 4000);
+
+        document.addEventListener("DOMContentLoaded", startStream);
     </script>
 </body>
 </html>
