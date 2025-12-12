@@ -262,6 +262,12 @@ def fetch_nifty_spot_price(fyers_integration) -> float:
                 )
             except Exception:
                 return None
+        # Fall back to last computed OI snapshot if available
+        try:
+            if option_chain_service.LAST_RESULT:
+                return float(option_chain_service.LAST_RESULT.spot)
+        except Exception:
+            pass
         return None
 
     cached_val = _cached_underlying()
@@ -302,7 +308,10 @@ def fetch_nifty_spot_price(fyers_integration) -> float:
         logger.warning("Using cached underlying price due to quote failures: %s", last_exc)
         return cached_val
 
-    raise RuntimeError(f"Error fetching NIFTY quote after retries: {last_exc}")
+    # Give clearer message to webhook caller, avoid 500 with opaque text
+    raise RuntimeError(
+        f"Error fetching NIFTY quote after retries; no cached underlying available. Last error: {last_exc}"
+    )
 
 
 def choose_nifty_option_from_signal(

@@ -340,12 +340,20 @@ def capture_auth_code():
 @app.route("/webhook", methods=["POST"])
 def webhook():
     def _build_and_dispatch(mode: str, direction: str, setup_type: str, side: str):
-        order_details, note = build_order_details_from_signal(
-            fyers_integration,
-            direction=direction,
-            setup_type=setup_type,
-            side=side,
-        )
+        try:
+            order_details, note = build_order_details_from_signal(
+                fyers_integration,
+                direction=direction,
+                setup_type=setup_type,
+                side=side,
+            )
+        except Exception as exc:
+            msg = str(exc)
+            if "429" in msg or "throttle" in msg.lower():
+                logger.warning("Order build failed due to throttling: %s", msg)
+                return jsonify({"status": "error", "detail": "Fyers throttled (429) while fetching quotes; retry shortly."}), 503
+            logger.error("Order build failed: %s", msg)
+            return jsonify({"status": "error", "detail": msg}), 500
         logging.info(f"[{mode}] {note}")
         logging.info(f"[{mode}] Order details: {order_details}")
         dispatch_order(fyers_integration, order_details)
