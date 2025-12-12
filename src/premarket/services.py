@@ -34,6 +34,7 @@ class FyersMarketDataService:
     def __init__(self, fyers_client: fyersModel.FyersModel):
         self.fyers = fyers_client
         self._ist = IST
+        self._last_regime: Optional[NiftyRegime] = None
 
         # Adjust these if your symbols differ in Fyers
         self.nifty_symbol = "NSE:NIFTY50-INDEX"
@@ -151,59 +152,79 @@ class FyersMarketDataService:
         return self._nice(df["Close"].iloc[-1])
 
     def classify_nifty_regime(self) -> NiftyRegime:
-        df = self._fetch_daily_history(self.nifty_symbol, days=40)
+        try:
+            df = self._fetch_daily_history(self.nifty_symbol, days=40)
 
-        atr = self._compute_atr(df, period=20)
-        atr_20 = float(atr.iloc[-1])
+            atr = self._compute_atr(df, period=20)
+            atr_20 = float(atr.iloc[-1])
 
-        prev = df.iloc[-1]
-        prev_range = float(prev["High"] - prev["Low"])
+            prev = df.iloc[-1]
+            prev_range = float(prev["High"] - prev["Low"])
 
-        if prev_range > 1.5 * atr_20:
-            vol = "High Volatility (range > 1.5x ATR20)"
-        elif prev_range < 0.8 * atr_20:
-            vol = "Low Volatility (range < 0.8x ATR20)"
-        else:
-            vol = "Normal Volatility"
+            if prev_range > 1.5 * atr_20:
+                vol = "High Volatility (range > 1.5x ATR20)"
+            elif prev_range < 0.8 * atr_20:
+                vol = "Low Volatility (range < 0.8x ATR20)"
+            else:
+                vol = "Normal Volatility"
 
-        close = df["Close"]
-        ema20 = close.ewm(span=20).mean()
-        ema50 = close.ewm(span=50).mean()
+            close = df["Close"]
+            ema20 = close.ewm(span=20).mean()
+            ema50 = close.ewm(span=50).mean()
 
-        if ema20.iloc[-1] > ema50.iloc[-1]:
-            trend = "Uptrend (EMA20 > EMA50)"
-        elif ema20.iloc[-1] < ema50.iloc[-1]:
-            trend = "Downtrend (EMA20 < EMA50)"
-        else:
-            trend = "Sideways / Flat EMAs"
+            if ema20.iloc[-1] > ema50.iloc[-1]:
+                trend = "Uptrend (EMA20 > EMA50)"
+            elif ema20.iloc[-1] < ema50.iloc[-1]:
+                trend = "Downtrend (EMA20 < EMA50)"
+            else:
+                trend = "Sideways / Flat EMAs"
 
-        last_close = float(close.iloc[-1])
-        implied_open = self._fetch_ltp(self.nifty_symbol)
+            last_close = float(close.iloc[-1])
+            try:
+                implied_open = self._fetch_ltp(self.nifty_symbol)
+            except Exception as exc:
+                logger.warning("NIFTY gap calc skipped (quotes error): %s", exc)
+                implied_open = last_close
 
-        gap_points = implied_open - last_close
-        gap_mult = gap_points / atr_20
+            gap_points = implied_open - last_close
+            gap_mult = gap_points / atr_20 if atr_20 else 0.0
 
-        if abs(gap_mult) < 0.3:
-            gap_type = "Small gap (<0.3x ATR)"
-        elif abs(gap_mult) < 1.0:
-            gap_type = "Medium gap (0.3-1x ATR)"
-        else:
-            gap_type = "Large gap (>1x ATR)"
+            if abs(gap_mult) < 0.3:
+                gap_type = "Small gap (<0.3x ATR)"
+            elif abs(gap_mult) < 1.0:
+                gap_type = "Medium gap (0.3-1x ATR)"
+            else:
+                gap_type = "Large gap (>1x ATR)"
 
-        logger.info(
-            f"NIFTY regime: atr_20={atr_20:.2f}, prev_range={prev_range:.2f}, "
-            f"vol='{vol}', trend='{trend}', gap_points={gap_points:.2f}, gap_mult={gap_mult:.2f}, gap_type='{gap_type}'"
-        )
-
-        return NiftyRegime(
-            atr_20=self._nice(atr_20),
-            day_range_prev=self._nice(prev_range),
-            vol_regime=vol,
-            trend_regime=trend,
-            gap_points=self._nice(gap_points),
-            gap_multiple_atr=self._nice(gap_mult),
-            gap_type=gap_type,
-        )
+            regime = NiftyRegime(
+                atr_20=self._nice(atr_20),
+                day_range_prev=self._nice(prev_range),
+                vol_regime=vol,
+                trend_regime=trend,
+                gap_points=self._nice(gap_points),
+                gap_multiple_atr=self._nice(gap_mult),
+                gap_type=gap_type,
+            )
+            self._last_regime = regime
+            logger.info(
+                f"NIFTY regime: atr_20={atr_20:.2f}, prev_range={prev_range:.2f}, "
+                f"vol='{vol}', trend='{trend}', gap_points={gap_points:.2f}, gap_mult={gap_mult:.2f}, gap_type='{gap_type}'"
+            )
+            return regime
+        except Exception as exc:
+            logger.warning("NIFTY regime fetch failed: %s", exc)
+            if self._last_regime:
+                return self._last_regime
+            # minimal placeholder to keep UI alive
+            return NiftyRegime(
+                atr_20=0.0,
+                day_range_prev=0.0,
+                vol_regime="Data unavailable",
+                trend_regime="Data unavailable",
+                gap_points=0.0,
+                gap_multiple_atr=0.0,
+                gap_type="Data unavailable",
+            )
 
 
 # ============================================================

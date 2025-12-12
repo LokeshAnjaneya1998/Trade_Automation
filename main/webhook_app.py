@@ -162,7 +162,9 @@ def configure_logging():
     )
     # Quiet noisy Fyers logs (JSON decode / 429 spam)
     for noisy in ("FyersAPI", "FyersAPIRequest"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+        lg = logging.getLogger(noisy)
+        lg.setLevel(logging.ERROR)
+        lg.propagate = False
 
 
 def read_log_tail(max_lines: int = 200) -> str:
