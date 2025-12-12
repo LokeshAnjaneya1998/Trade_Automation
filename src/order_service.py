@@ -30,6 +30,7 @@ _OPTION_CHAIN_HAD_ERROR = False
 LAST_ORDER = {}
 LAST_ORDERS = deque(maxlen=5)
 PROFILE_CACHE = {"ts": 0.0, "data": None}
+LAST_SPOT_PRICE: float | None = None
 
 
 # -------------------- Strike helpers --------------------
@@ -252,8 +253,9 @@ def fetch_nifty_spot_price(fyers_integration) -> float:
     """
     Fetch spot; prefer cached option-chain underlying to avoid extra quote latency.
     """
+    global LAST_SPOT_PRICE
     def _cached_underlying():
-        cached = get_cached_option_chain()
+        cached = get_cached_option_chain(max_age_sec=300)
         if cached:
             try:
                 return float(
@@ -268,10 +270,17 @@ def fetch_nifty_spot_price(fyers_integration) -> float:
                 return float(option_chain_service.LAST_RESULT.spot)
         except Exception:
             pass
+        # Last resort: previously seen spot
+        try:
+            if LAST_SPOT_PRICE:
+                return float(LAST_SPOT_PRICE)
+        except Exception:
+            pass
         return None
 
     cached_val = _cached_underlying()
     if cached_val:
+        LAST_SPOT_PRICE = cached_val
         return cached_val
 
     # Try live quotes with small retry/backoff; fall back to cached underlying if throttled.
@@ -290,6 +299,7 @@ def fetch_nifty_spot_price(fyers_integration) -> float:
             lp = v.get("lp")
             if lp is None:
                 raise RuntimeError(f"Last price missing in quote payload: {resp}")
+            LAST_SPOT_PRICE = float(lp)
             return float(lp)
         except Exception as exc:
             last_exc = exc
