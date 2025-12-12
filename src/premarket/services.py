@@ -83,6 +83,30 @@ class FyersMarketDataService:
     def _nice(n: float, digits: int = 2) -> float:
         return float(f"{n:.{digits}f}")
 
+    # ---------- Resilient Fyers calls ----------
+
+    def _call_with_retry(self, func, payload: Dict, label: str, retries: int = 2, backoff: float = 0.6) -> Dict:
+        """
+        Call a Fyers endpoint with basic retry/backoff and better 429 handling.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                resp = func(payload)
+                if not isinstance(resp, dict):
+                    raise RuntimeError(f"{label}: non-dict response from Fyers")
+                # Handle throttling gracefully
+                if resp.get("code") == 429 or (resp.get("s") == "error" and resp.get("code") == 429):
+                    raise RuntimeError(f"{label}: Fyers throttled (429)")
+                return resp
+            except Exception as exc:
+                last_exc = exc
+                if attempt == retries:
+                    break
+                time.sleep(backoff)
+                backoff *= 2
+        raise RuntimeError(f"{label}: failed after retries: {last_exc}") from last_exc
+
     # ---------- Core Fyers functions ----------
 
     def _fetch_daily_history(self, symbol: str, days: int = 40) -> pd.DataFrame:
@@ -97,7 +121,7 @@ class FyersMarketDataService:
             "range_to": today.strftime("%Y-%m-%d"),
             "cont_flag": "1",
         }
-        resp = self.fyers.history(payload)
+        resp = self._call_with_retry(self.fyers.history, payload, f"history {symbol}")
         if resp.get("s") != "ok":
             raise RuntimeError(f"Error fetching history for {symbol}: {resp}")
 
@@ -106,7 +130,7 @@ class FyersMarketDataService:
         return df.tail(days)
 
     def _fetch_ltp(self, symbol: str) -> float:
-        resp = self.fyers.quotes({"symbols": symbol})
+        resp = self._call_with_retry(self.fyers.quotes, {"symbols": symbol}, f"quotes {symbol}")
         if resp.get("s") != "ok":
             raise RuntimeError(f"Error fetching quotes for {symbol}: {resp}")
 
