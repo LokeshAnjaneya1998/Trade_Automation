@@ -1,5 +1,6 @@
 import datetime as dt
 import logging
+import time
 from typing import Any, Dict, List
 
 import pytz
@@ -23,6 +24,9 @@ class PremarketAnalyzer:
     Gathers data using services and produces a summary + suggestions.
     """
 
+    CACHE_TTL = 120  # seconds
+    CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
+
     def __init__(self, symbol: str = "NIFTY"):
         self.symbol = symbol
         self.fyers_integration = FyersIntegration()
@@ -41,10 +45,20 @@ class PremarketAnalyzer:
         as_of_ist = dt.datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S %Z")
         nifty_regime = mds.classify_nifty_regime()
         logger.debug(f"PremarketAnalyzer: nifty_regime={nifty_regime}")
-        india_vix = mds.fetch_india_vix()
-        logger.debug(f"PremarketAnalyzer: india_vix={india_vix}")
-        oi_pressure = self.ocs.compute_oi_pressure()
-        logger.debug(f"PremarketAnalyzer: oi_pressure={oi_pressure}")
+
+        try:
+            india_vix = mds.fetch_india_vix()
+            logger.debug(f"PremarketAnalyzer: india_vix={india_vix}")
+        except Exception as exc:
+            logger.warning("India VIX fetch failed: %s", exc)
+            india_vix = None
+
+        try:
+            oi_pressure = self.ocs.compute_oi_pressure()
+            logger.debug(f"PremarketAnalyzer: oi_pressure={oi_pressure}")
+        except Exception as exc:
+            logger.warning("OI pressure fetch failed: %s", exc)
+            oi_pressure = None
 
         return PremarketSummary(
             as_of_ist=as_of_ist,
@@ -251,15 +265,30 @@ class PremarketAnalyzer:
         """
         JSON-serializable structure for Flask jsonify() and frontend JS.
         """
-        resp = self.analyze()
-        return {
-            "summary": resp.summary,
-            "checkpoints": [
-                {"title": c.title, "status": c.status, "message": c.message}
-                for c in resp.checkpoints
-            ],
-            "suggestions": [
-                {"title": s.title, "detail": s.detail}
-                for s in resp.suggestions
-            ],
-        }
+        now = time.time()
+        cache_age = now - self.CACHE["ts"]
+        if self.CACHE["data"] and cache_age < self.CACHE_TTL:
+            return self.CACHE["data"]
+
+        try:
+            resp = self.analyze()
+            data = {
+                "summary": resp.summary,
+                "checkpoints": [
+                    {"title": c.title, "status": c.status, "message": c.message}
+                    for c in resp.checkpoints
+                ],
+                "suggestions": [
+                    {"title": s.title, "detail": s.detail}
+                    for s in resp.suggestions
+                ],
+            }
+            self.CACHE["data"] = data
+            self.CACHE["ts"] = now
+            return data
+        except Exception as exc:
+            # If we have a recent snapshot, serve it instead of failing the request.
+            if self.CACHE["data"]:
+                logger.warning(f"Premarket analyze failed, serving cached snapshot: {exc}")
+                return self.CACHE["data"]
+            raise

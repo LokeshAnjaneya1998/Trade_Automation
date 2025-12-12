@@ -252,29 +252,57 @@ def fetch_nifty_spot_price(fyers_integration) -> float:
     """
     Fetch spot; prefer cached option-chain underlying to avoid extra quote latency.
     """
-    cached = get_cached_option_chain()
-    if cached:
-        try:
-            underlying = (
-                cached.get("records", {}).get("underlyingValue")
-                or cached.get("filtered", {}).get("data", [{}])[0].get("underlyingValue")
-            )
-            if underlying:
-                return float(underlying)
-        except Exception:
-            pass
+    def _cached_underlying():
+        cached = get_cached_option_chain()
+        if cached:
+            try:
+                return float(
+                    (cached.get("records", {}) or {}).get("underlyingValue")
+                    or (cached.get("filtered", {}).get("data", [{}])[0].get("underlyingValue"))
+                )
+            except Exception:
+                return None
+        return None
 
+    cached_val = _cached_underlying()
+    if cached_val:
+        return cached_val
+
+    # Try live quotes with small retry/backoff; fall back to cached underlying if throttled.
     fyers = fyers_integration.get_fyers_instance()
-    resp = fyers.quotes({"symbols": "NSE:NIFTY50-INDEX"})
-    if resp.get("s") != "ok":
-        raise RuntimeError(f"Error fetching NIFTY quote: {resp}")
+    last_exc = None
+    for delay in (0.0, 0.5, 1.0):
+        if delay:
+            time.sleep(delay)
+        try:
+            resp = fyers.quotes({"symbols": "NSE:NIFTY50-INDEX"})
+            if resp.get("s") != "ok":
+                raise RuntimeError(f"Error fetching NIFTY quote: {resp}")
 
-    data = resp.get("d") or []
-    v = data[0].get("v", {}) if data else {}
-    lp = v.get("lp")
-    if lp is None:
-        raise RuntimeError(f"Last price missing in quote payload: {resp}")
-    return float(lp)
+            data = resp.get("d") or []
+            v = data[0].get("v", {}) if data else {}
+            lp = v.get("lp")
+            if lp is None:
+                raise RuntimeError(f"Last price missing in quote payload: {resp}")
+            return float(lp)
+        except Exception as exc:
+            last_exc = exc
+            continue
+
+    # fallback to cached underlying if we have it (re-check) or try a forced refresh
+    cached_val = _cached_underlying()
+    if not cached_val:
+        try:
+            option_chain_service.refresh_cache()
+            cached_val = _cached_underlying()
+        except Exception as exc:
+            logger.debug("Forced option-chain refresh failed during spot fetch: %s", exc)
+
+    if cached_val:
+        logger.warning("Using cached underlying price due to quote failures: %s", last_exc)
+        return cached_val
+
+    raise RuntimeError(f"Error fetching NIFTY quote after retries: {last_exc}")
 
 
 def choose_nifty_option_from_signal(
