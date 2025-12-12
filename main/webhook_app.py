@@ -160,6 +160,9 @@ def configure_logging():
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[stream_handler, file_handler],
     )
+    # Quiet noisy Fyers logs (JSON decode / 429 spam)
+    for noisy in ("FyersAPI", "FyersAPIRequest"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def read_log_tail(max_lines: int = 200) -> str:
