@@ -13,6 +13,7 @@ from flask import (
     Flask,
     request,
     jsonify,
+    Response,
     abort,
     render_template,
     session,
@@ -300,6 +301,28 @@ def logs_snippet():
     sep = '<div class="log-separator"></div>'
     html_body = sep.join(body_lines)
     return app.response_class(html_body, mimetype="text/html")
+
+
+@app.route("/logs/stream")
+@login_required
+def logs_stream():
+    """
+    Server-sent events stream for live log updates.
+    """
+    def event_stream():
+        try:
+            with open(LOG_FILE, "r") as f:
+                f.seek(0, os.SEEK_END)
+                while True:
+                    line = f.readline()
+                    if line:
+                        payload = make_links(line.rstrip())
+                        yield f"data: {payload}\n\n"
+                    else:
+                        time.sleep(0.5)
+        except FileNotFoundError:
+            yield "data: \n\n"
+    return Response(event_stream(), mimetype="text/event-stream")
 
 
 # ──────────────────────────────────────────────────────────────
