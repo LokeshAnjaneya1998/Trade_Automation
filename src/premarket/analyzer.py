@@ -25,12 +25,12 @@ class PremarketAnalyzer:
     """
 
     CACHE_TTL = 120  # seconds
-    CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
 
     def __init__(self, symbol: str = "NIFTY"):
         self.symbol = symbol
         self.fyers_integration = FyersIntegration()
         self.ocs = OptionChainService(symbol)
+        self._cache: Dict[str, Any] = {"ts": 0.0, "data": None}
 
     def _get_market_data_service(self) -> FyersMarketDataService:
         # Always build with a fresh Fyers client so new access tokens are picked up.
@@ -266,9 +266,9 @@ class PremarketAnalyzer:
         JSON-serializable structure for Flask jsonify() and frontend JS.
         """
         now = time.time()
-        cache_age = now - self.CACHE["ts"]
-        if self.CACHE["data"] and cache_age < self.CACHE_TTL:
-            return self.CACHE["data"]
+        cache_age = now - self._cache["ts"]
+        if self._cache["data"] and cache_age < self.CACHE_TTL:
+            return self._cache["data"]
 
         try:
             resp = self.analyze()
@@ -283,12 +283,12 @@ class PremarketAnalyzer:
                     for s in resp.suggestions
                 ],
             }
-            self.CACHE["data"] = data
-            self.CACHE["ts"] = now
+            self._cache["data"] = data
+            self._cache["ts"] = now
             return data
         except Exception as exc:
             # If we have a recent snapshot, serve it instead of failing the request.
-            if self.CACHE["data"]:
+            if self._cache["data"]:
                 logger.warning(f"Premarket analyze failed, serving cached snapshot: {exc}")
-                return self.CACHE["data"]
+                return self._cache["data"]
             raise

@@ -3,7 +3,7 @@
 import datetime as dt
 import logging
 import time
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import pandas as pd
 import pytz
@@ -238,14 +238,25 @@ class OptionChainService:
     Builds a synthetic NSE-like structure and caches it for reuse.
     """
 
-    CACHE = {"ts": 0.0, "data": None}
     CACHE_TTL = 20  # seconds
-    LAST_RESULT: Optional[OIPressure] = None  # keep last good snapshot
+    _CACHE_BY_SYMBOL: Dict[str, Dict[str, Any]] = {}
+    _LAST_RESULT_BY_SYMBOL: Dict[str, Optional[OIPressure]] = {}
 
     def __init__(self, symbol: str = "NIFTY", fyers_integration=None):
-        self.symbol = symbol
+        self.symbol = symbol.upper()
+        self._cache_key = self.symbol
         self.fyers_integration = fyers_integration or FyersIntegration()
         self.calendar = get_nse_trading_calendar_for_current_year()
+        # Keep a per-symbol cache so BANKNIFTY/FINNIFTY instances don't clobber each other.
+        self._cache = self._CACHE_BY_SYMBOL.setdefault(self._cache_key, {"ts": 0.0, "data": None})
+
+    @property
+    def cache(self) -> Dict[str, any]:
+        return self._cache
+
+    @property
+    def last_result(self) -> Optional[OIPressure]:
+        return self._LAST_RESULT_BY_SYMBOL.get(self._cache_key)
 
     def _get_fyers(self):
         return self.fyers_integration.get_fyers_instance()
@@ -335,37 +346,37 @@ class OptionChainService:
 
     def _fetch_with_cache(self) -> Optional[dict]:
         now = time.time()
-        if self.CACHE["data"] and (now - self.CACHE["ts"]) <= self.CACHE_TTL:
-            return self.CACHE["data"]
+        if self._cache["data"] and (now - self._cache["ts"]) <= self.CACHE_TTL:
+            return self._cache["data"]
         try:
             raw = self._fetch_chain_from_fyers()
-            self.CACHE["ts"] = now
-            self.CACHE["data"] = raw
-            logger.debug("Option chain cache refreshed from Fyers")
+            self._cache["ts"] = now
+            self._cache["data"] = raw
+            logger.debug("Option chain cache refreshed from Fyers for %s", self.symbol)
             return raw
         except Exception as exc:
-            logger.warning("Option chain fetch failed (Fyers): %s", exc)
-            return self.CACHE["data"]
+            logger.warning("Option chain fetch failed (Fyers) for %s: %s", self.symbol, exc)
+            return self._cache["data"]
 
     def refresh_cache(self):
         """Explicit refresh for background timers."""
         data = self._fetch_chain_from_fyers()
-        self.CACHE["ts"] = time.time()
-        self.CACHE["data"] = data
-        logger.debug("Option chain cache refreshed from Fyers")
+        self._cache["ts"] = time.time()
+        self._cache["data"] = data
+        logger.debug("Option chain cache refreshed from Fyers for %s", self.symbol)
 
     def compute_oi_pressure(self) -> Optional[OIPressure]:
         data = self._fetch_with_cache()
         if not data:
-            return self.LAST_RESULT
+            return self.last_result
 
         records = (data.get("records", {}) or {}).get("data", []) or []
         underlying = data.get("records", {}).get("underlyingValue")
         if underlying is None:
-            if self.LAST_RESULT:
-                underlying = self.LAST_RESULT.spot
+            if self.last_result:
+                underlying = self.last_result.spot
             else:
-                return self.LAST_RESULT
+                return self.last_result
 
         ce_oi = 0
         pe_oi = 0
@@ -393,10 +404,11 @@ class OptionChainService:
             f"OI pressure (Fyers): spot={underlying}, ce_oi_near={ce_oi}, pe_oi_near={pe_oi}, pressure={skew}"
         )
 
-        self.LAST_RESULT = OIPressure(
+        snapshot = OIPressure(
             spot=float(underlying),
             ce_oi_near=ce_oi,
             pe_oi_near=pe_oi,
             pressure=skew,
         )
-        return self.LAST_RESULT
+        self._LAST_RESULT_BY_SYMBOL[self._cache_key] = snapshot
+        return snapshot
