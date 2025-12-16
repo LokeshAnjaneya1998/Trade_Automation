@@ -31,6 +31,8 @@ LAST_ORDER = {}
 LAST_ORDERS = deque(maxlen=5)
 PROFILE_CACHE = {"ts": 0.0, "data": None}
 LAST_SPOT_PRICE: float | None = None
+# Track first entry per opt type (CE/PE) per day to reuse same strike for add-ons and exits.
+ENTRY_TRACKER: dict[str, dict] = {"CE": None, "PE": None}
 
 
 # -------------------- Strike helpers --------------------
@@ -458,46 +460,97 @@ def build_order_details_from_signal(
     if spot_price is None:
         spot_price = fetch_nifty_spot_price(fyers_integration)
 
-    selection = select_option_from_chain(
-        spot_price=spot_price,
-        direction=direction,
-        setup_type=selection_setup,
-        calendar=TRADING_CALENDAR,
-    )
+    opt_type = "CE" if direction == "LONG_CALL" else "PE"
+    now_ist = datetime.now(IST)
+    today = now_ist.date()
 
+    def _entry_record_for_today() -> dict | None:
+        rec = ENTRY_TRACKER.get(opt_type)
+        if rec and rec.get("date") == today:
+            return rec
+        return None
+
+    def _record_entry(sel):
+        ENTRY_TRACKER[opt_type] = {
+            "date": today,
+            "strike": sel.strike,
+            "expiry_date": sel.expiry_date,
+            "symbol": sel.symbol,
+            "notes": sel.notes,
+        }
+
+    entry_rec = _entry_record_for_today()
+
+    # Select option if we are not exiting or we have no prior entry cached.
+    selection = None
     source = "option_chain"
-    if selection is None:
-        selection = choose_nifty_option_from_signal(
+    if setup_type != "EXIT" or entry_rec is None:
+        selection = select_option_from_chain(
             spot_price=spot_price,
             direction=direction,
             setup_type=selection_setup,
             calendar=TRADING_CALENDAR,
         )
-        source = "calendar"
 
-    opt_type = "CE" if direction == "LONG_CALL" else "PE"
-    now_ist = datetime.now(IST)
-    is_expiry_day = selection.expiry_date == now_ist.date()
-    strike_override = select_strike(
-        spot_price=spot_price,
-        opt_type=opt_type,
-        signal_time=now_ist,
-        is_expiry_day=is_expiry_day,
-        iv_percent=None,
-        momentum_flag=None,
-    )
-    if strike_override != selection.strike:
-        selection.strike = strike_override
-        selection.symbol = fyers_nifty_option_symbol(
-            underlying="NIFTY",
-            expiry_d=selection.expiry_date,
-            strike=strike_override,
-            opt_type=opt_type,
-            calendar=TRADING_CALENDAR,
-            expiry_weekday=1,
-            exchange_prefix="NSE:",
+        if selection is None:
+            selection = choose_nifty_option_from_signal(
+                spot_price=spot_price,
+                direction=direction,
+                setup_type=selection_setup,
+                calendar=TRADING_CALENDAR,
+            )
+            source = "calendar"
+
+    if setup_type == "EXIT":
+        if entry_rec is None:
+            raise ValueError(f"No tracked entry for {opt_type} today; cannot exit same strike.")
+        # Reuse the exact strike/symbol from the first entry of the day.
+        selection = OptionSelection(
+            direction=direction,
+            setup_type=selection_setup,
+            strike_style="ATM",
+            strike=entry_rec["strike"],
+            expiry_date=entry_rec["expiry_date"],
+            symbol=entry_rec["symbol"],
+            notes=f"exit_using_tracked_entry strike={entry_rec['strike']} expiry={entry_rec['expiry_date']}",
         )
-        selection.notes += f" | strike_override={strike_override}"
+        source = "entry_tracker"
+    elif entry_rec is not None:
+        # Adding to same direction/optType -> reuse strike from first entry.
+        selection = OptionSelection(
+            direction=direction,
+            setup_type=selection_setup,
+            strike_style=selection.strike_style if selection else "ATM",
+            strike=entry_rec["strike"],
+            expiry_date=entry_rec["expiry_date"],
+            symbol=entry_rec["symbol"],
+            notes=(selection.notes if selection else "") + f" | reusing_tracked_entry strike={entry_rec['strike']}",
+        )
+        source = "entry_tracker_reuse"
+    else:
+        # Fresh entry: allow time-of-day override and then record it.
+        is_expiry_day = selection.expiry_date == today
+        strike_override = select_strike(
+            spot_price=spot_price,
+            opt_type=opt_type,
+            signal_time=now_ist,
+            is_expiry_day=is_expiry_day,
+            iv_percent=None,
+            momentum_flag=None,
+        )
+        if strike_override != selection.strike:
+            selection.strike = strike_override
+            selection.symbol = fyers_nifty_option_symbol(
+                underlying="NIFTY",
+                expiry_d=selection.expiry_date,
+                strike=strike_override,
+                opt_type=opt_type,
+                calendar=TRADING_CALENDAR,
+                expiry_weekday=1,
+                exchange_prefix="NSE:",
+            )
+            selection.notes += f" | strike_override={strike_override}"
+        _record_entry(selection)
 
     fyers_side = 1 if str(side).lower() in {"1", "buy", "b"} else -1
 
