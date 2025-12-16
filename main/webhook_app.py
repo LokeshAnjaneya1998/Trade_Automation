@@ -1,8 +1,6 @@
 import logging
 import os
 import re
-import shlex
-import shutil
 import subprocess
 import threading
 import time
@@ -468,30 +466,32 @@ def restart_service():
     if ADMIN_TOKEN and token != ADMIN_TOKEN:
         abort(403)
 
-    # Simplest path: run the exact command provided (or a safe default).
+    # Run the exact command provided (or a safe default) in the background after a short delay,
+    # so the HTTP response completes before the service restarts.
     default_cmd = f"sudo systemctl restart {os.getenv('BOT_SERVICE_NAME', 'fyersbot')}"
-    restart_cmd_env = os.getenv("BOT_RESTART_CMD", default_cmd).strip()
-    cmd = shlex.split(restart_cmd_env)
-
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=15)
-        logger.info("Restart triggered via: %s", " ".join(cmd))
-        message = f"Bot restart triggered. Command: {' '.join(cmd)}"
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").strip()
-        logger.error("Restart failed: %s", stderr or exc)
+    restart_cmd = os.getenv("BOT_RESTART_CMD", default_cmd).strip()
+    if not restart_cmd:
         return jsonify({
             "status": "error",
-            "detail": "Failed to restart bot.",
-            "stderr": stderr,
-            "command": " ".join(cmd),
+            "detail": "Restart command is empty; set BOT_RESTART_CMD or BOT_SERVICE_NAME.",
         }), 500
+
+    try:
+        wrapper_cmd = ["/bin/bash", "-lc", f"sleep 1; {restart_cmd}"]
+        subprocess.Popen(
+            wrapper_cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        logger.info("Restart scheduled via: %s", restart_cmd)
+        message = f"Bot restart triggered. Command: {restart_cmd}"
     except Exception as exc:
         logger.error("Restart failed: %s", exc)
         return jsonify({
             "status": "error",
             "detail": f"Unexpected restart failure: {exc}",
-            "command": " ".join(cmd),
+            "command": restart_cmd,
         }), 500
 
     return render_template(
