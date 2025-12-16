@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import threading
@@ -467,22 +468,39 @@ def restart_service():
     if ADMIN_TOKEN and token != ADMIN_TOKEN:
         abort(403)
 
-    service_name = os.getenv("BOT_SERVICE_NAME", "fyersbot")
-    use_sudo = os.getenv("USE_SUDO_FOR_RESTART", "1").lower() not in {"0", "false", "no"}
-    systemctl_cmd = ["systemctl", "restart", service_name]
+    # Optional explicit command override (e.g. "sudo systemctl restart fyersbot")
+    restart_cmd_env = os.getenv("BOT_RESTART_CMD", "").strip()
+    if restart_cmd_env:
+        cmd = shlex.split(restart_cmd_env)
+    else:
+        service_name = os.getenv("BOT_SERVICE_NAME", "fyersbot")
+        use_sudo = os.getenv("USE_SUDO_FOR_RESTART", "1").lower() not in {"0", "false", "no"}
 
-    cmd = systemctl_cmd
-    sudo_path = shutil.which("sudo")
-    if use_sudo and os.name != "nt":
-        if sudo_path:
-            cmd = [sudo_path, "-n"] + systemctl_cmd
+        # Pick restart command: prefer systemctl, fall back to service.
+        systemctl_path = shutil.which("systemctl")
+        service_path = shutil.which("service")
+        if systemctl_path:
+            base_cmd = [systemctl_path, "restart", service_name]
+        elif service_path:
+            base_cmd = [service_path, service_name, "restart"]
         else:
-            logger.warning("USE_SUDO_FOR_RESTART is true but 'sudo' not found; falling back to systemctl without sudo.")
+            return jsonify({
+                "status": "error",
+                "detail": f"Restart unsupported: neither systemctl nor service found on host for '{service_name}'.",
+            }), 500
+
+        cmd = base_cmd
+        sudo_path = shutil.which("sudo")
+        if use_sudo and os.name != "nt":
+            if sudo_path:
+                cmd = [sudo_path, "-n"] + base_cmd
+            else:
+                logger.warning("USE_SUDO_FOR_RESTART is true but 'sudo' not found; falling back to restart without sudo.")
 
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=15)
         logger.info("Restart triggered for service '%s' via %s", service_name, " ".join(cmd))
-        message = "Bot restart triggered. Service: {svc}".format(svc=service_name)
+        message = "Bot restart triggered. Command: {cmd}".format(cmd=" ".join(cmd))
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
         logger.error("Restart failed for service '%s': %s", service_name, stderr or exc)
