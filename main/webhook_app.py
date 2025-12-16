@@ -1,8 +1,9 @@
 import logging
 import os
-import time
 import re
+import subprocess
 import threading
+import time
 import html
 from pathlib import Path
 from functools import wraps
@@ -465,16 +466,37 @@ def restart_service():
     if ADMIN_TOKEN and token != ADMIN_TOKEN:
         abort(403)
 
-    def delayed_exit():
-        time.sleep(1)
-        os._exit(0)
+    service_name = os.getenv("BOT_SERVICE_NAME", "fyersbot")
+    use_sudo = os.getenv("USE_SUDO_FOR_RESTART", "1").lower() not in {"0", "false", "no"}
+    cmd = ["systemctl", "restart", service_name]
+    if use_sudo and os.name != "nt":
+        cmd = ["sudo", "-n"] + cmd
 
-    threading.Thread(target=delayed_exit, daemon=True).start()
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=15)
+        logger.info("Restart triggered for service '%s' via %s", service_name, " ".join(cmd))
+        message = "Bot restart triggered. Service: {svc}".format(svc=service_name)
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        logger.error("Restart failed for service '%s': %s", service_name, stderr or exc)
+        return jsonify({
+            "status": "error",
+            "detail": f"Failed to restart service '{service_name}'.",
+            "stderr": stderr,
+            "command": " ".join(cmd),
+        }), 500
+    except Exception as exc:
+        logger.error("Restart failed for service '%s': %s", service_name, exc)
+        return jsonify({
+            "status": "error",
+            "detail": f"Unexpected restart failure for '{service_name}': {exc}",
+            "command": " ".join(cmd),
+        }), 500
 
     return render_template(
         "message.html",
         title="Restarting bot...",
-        message="Bot is restarting... you will be redirected to the dashboard.",
+        message=message + " You will be redirected to the dashboard.",
         redirect_url=url_for("dashboard"),
         delay_ms=1000,
     )

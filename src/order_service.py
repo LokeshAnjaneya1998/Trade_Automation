@@ -20,9 +20,9 @@ IST = pytz.timezone("Asia/Kolkata")
 # Shared trading context
 TRADING_CALENDAR = get_nse_trading_calendar_for_current_year()
 option_chain_service = OptionChainService(symbol="NIFTY")
-# Share the same cache object as the OptionChainService class, so premarket and
-# order paths read/write a single source of truth.
-OPTION_CHAIN_CACHE = option_chain_service.CACHE
+# Share the same cache object as the OptionChainService instance, so premarket
+# and order paths read/write a single source of truth.
+OPTION_CHAIN_CACHE = option_chain_service.cache
 _OPTION_CHAIN_LOCK = threading.Lock()
 _OPTION_CHAIN_INFLIGHT = False
 _OPTION_CHAIN_LAST_ERROR_TS = 0.0
@@ -266,8 +266,8 @@ def fetch_nifty_spot_price(fyers_integration) -> float:
                 return None
         # Fall back to last computed OI snapshot if available
         try:
-            if option_chain_service.LAST_RESULT:
-                return float(option_chain_service.LAST_RESULT.spot)
+            if option_chain_service.last_result:
+                return float(option_chain_service.last_result.spot)
         except Exception:
             pass
         # Last resort: previously seen spot
