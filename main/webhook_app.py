@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -468,9 +469,15 @@ def restart_service():
 
     service_name = os.getenv("BOT_SERVICE_NAME", "fyersbot")
     use_sudo = os.getenv("USE_SUDO_FOR_RESTART", "1").lower() not in {"0", "false", "no"}
-    cmd = ["systemctl", "restart", service_name]
+    systemctl_cmd = ["systemctl", "restart", service_name]
+
+    cmd = systemctl_cmd
+    sudo_path = shutil.which("sudo")
     if use_sudo and os.name != "nt":
-        cmd = ["sudo", "-n"] + cmd
+        if sudo_path:
+            cmd = [sudo_path, "-n"] + systemctl_cmd
+        else:
+            logger.warning("USE_SUDO_FOR_RESTART is true but 'sudo' not found; falling back to systemctl without sudo.")
 
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=15)
