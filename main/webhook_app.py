@@ -468,53 +468,29 @@ def restart_service():
     if ADMIN_TOKEN and token != ADMIN_TOKEN:
         abort(403)
 
-    # Optional explicit command override (e.g. "sudo systemctl restart fyersbot")
-    restart_cmd_env = os.getenv("BOT_RESTART_CMD", "").strip()
-    if restart_cmd_env:
-        cmd = shlex.split(restart_cmd_env)
-    else:
-        service_name = os.getenv("BOT_SERVICE_NAME", "fyersbot")
-        use_sudo = os.getenv("USE_SUDO_FOR_RESTART", "1").lower() not in {"0", "false", "no"}
-
-        # Pick restart command: prefer systemctl, fall back to service.
-        systemctl_path = shutil.which("systemctl")
-        service_path = shutil.which("service")
-        if systemctl_path:
-            base_cmd = [systemctl_path, "restart", service_name]
-        elif service_path:
-            base_cmd = [service_path, service_name, "restart"]
-        else:
-            return jsonify({
-                "status": "error",
-                "detail": f"Restart unsupported: neither systemctl nor service found on host for '{service_name}'.",
-            }), 500
-
-        cmd = base_cmd
-        sudo_path = shutil.which("sudo")
-        if use_sudo and os.name != "nt":
-            if sudo_path:
-                cmd = [sudo_path, "-n"] + base_cmd
-            else:
-                logger.warning("USE_SUDO_FOR_RESTART is true but 'sudo' not found; falling back to restart without sudo.")
+    # Simplest path: run the exact command provided (or a safe default).
+    default_cmd = f"sudo systemctl restart {os.getenv('BOT_SERVICE_NAME', 'fyersbot')}"
+    restart_cmd_env = os.getenv("BOT_RESTART_CMD", default_cmd).strip()
+    cmd = shlex.split(restart_cmd_env)
 
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=15)
-        logger.info("Restart triggered for service '%s' via %s", service_name, " ".join(cmd))
-        message = "Bot restart triggered. Command: {cmd}".format(cmd=" ".join(cmd))
+        logger.info("Restart triggered via: %s", " ".join(cmd))
+        message = f"Bot restart triggered. Command: {' '.join(cmd)}"
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
-        logger.error("Restart failed for service '%s': %s", service_name, stderr or exc)
+        logger.error("Restart failed: %s", stderr or exc)
         return jsonify({
             "status": "error",
-            "detail": f"Failed to restart service '{service_name}'.",
+            "detail": "Failed to restart bot.",
             "stderr": stderr,
             "command": " ".join(cmd),
         }), 500
     except Exception as exc:
-        logger.error("Restart failed for service '%s': %s", service_name, exc)
+        logger.error("Restart failed: %s", exc)
         return jsonify({
             "status": "error",
-            "detail": f"Unexpected restart failure for '{service_name}': {exc}",
+            "detail": f"Unexpected restart failure: {exc}",
             "command": " ".join(cmd),
         }), 500
 
