@@ -191,12 +191,28 @@
         }
     }
 
+    async function fetchJson(url) {
+        const res = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+        const ctype = res.headers.get("content-type") || "";
+        if (!ctype.includes("application/json")) {
+            const text = await res.text().catch(() => "");
+            const msg = res.status === 401 || res.status === 302
+                ? "Session expired; reload the page and log in again."
+                : `Unexpected response (${res.status}).`;
+            throw new Error(`${msg} Body preview: ${text.slice(0, 120)}`);
+        }
+        const data = await res.json();
+        if (res.status === 401 || res.status === 403) {
+            throw new Error("Unauthorized; reload the page and log in again.");
+        }
+        return { res, data };
+    }
+
     async function loadPremarket(silent = false) {
         const btn = document.getElementById("premarket-refresh-btn");
         if (!silent && btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
         try {
-            const res = await fetch("{{ url_for('premarket_summary') }}");
-            const data = await res.json();
+            const { res, data } = await fetchJson("{{ url_for('premarket_summary') }}");
             if (!res.ok || !data.summary) {
                 const metaEl = document.getElementById("premarket-meta");
                 const detail = data.error || data.detail || res.statusText || "Unknown error";
@@ -256,8 +272,7 @@
         const body = document.getElementById("last-order-body");
         if (!silent && btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
         try {
-            const res = await fetch("{{ url_for('last_order') }}");
-            const data = await res.json();
+            const { res, data } = await fetchJson("{{ url_for('last_order') }}");
             if (!res.ok || !data.order_details) {
                 const detail = data.detail || data.error || res.statusText || "No order yet";
                 if (meta) meta.textContent = "Last order unavailable: " + detail;
@@ -293,8 +308,7 @@
         const body = document.getElementById("health-body");
         if (!silent && btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
         try {
-            const res = await fetch("{{ url_for('health') }}");
-            const data = await res.json();
+            const { res, data } = await fetchJson("{{ url_for('health') }}");
             if (!res.ok || data.error) {
                 const detail = data.detail || data.error || res.statusText || "Unknown error";
                 if (meta) meta.textContent = "Health unavailable: " + detail;
@@ -331,8 +345,7 @@
         const body = document.getElementById("recent-body");
         if (!silent && btn) { btn.disabled = true; btn.textContent = "Refreshing..."; }
         try {
-            const res = await fetch("{{ url_for('recent_orders') }}");
-            const data = await res.json();
+            const { res, data } = await fetchJson("{{ url_for('recent_orders') }}");
             if (!res.ok || data.error) {
                 const detail = data.detail || data.error || res.statusText || "Unknown error";
                 if (meta) meta.textContent = "Recent orders unavailable: " + detail;
