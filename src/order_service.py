@@ -455,6 +455,7 @@ def build_order_details_from_signal(
     setup_type: str,
     spot_price: float | None = None,
     side: str = "buy",
+    qty: int | None = None,
 ):
     selection_setup = setup_type if setup_type in ("BREAKOUT", "REVERSAL") else "BREAKOUT"
     if spot_price is None:
@@ -553,10 +554,19 @@ def build_order_details_from_signal(
         _record_entry(selection)
 
     fyers_side = 1 if str(side).lower() in {"1", "buy", "b"} else -1
+    if qty is None:
+        qty_final = 75
+    else:
+        try:
+            qty_final = int(qty)
+        except Exception:
+            raise ValueError(f"Invalid qty value: {qty}")
+        if qty_final <= 0:
+            raise ValueError(f"Quantity must be positive; got {qty_final}")
 
     order_details = {
         "symbol": selection.symbol,
-        "qty": 75,               # you can parameterize this
+        "qty": qty_final,
         "type": 2,               # MARKET
         "side": fyers_side,      # 1 = buy, -1 = sell
         "productType": "INTRADAY",

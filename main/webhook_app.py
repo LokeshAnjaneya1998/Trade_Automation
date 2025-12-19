@@ -362,13 +362,14 @@ def capture_auth_code():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    def _build_and_dispatch(mode: str, direction: str, setup_type: str, side: str):
+    def _build_and_dispatch(mode: str, direction: str, setup_type: str, side: str, qty: int | None = None):
         try:
             order_details, note = build_order_details_from_signal(
                 fyers_integration,
                 direction=direction,
                 setup_type=setup_type,
                 side=side,
+                qty=qty,
             )
         except Exception as exc:
             msg = str(exc)
@@ -385,6 +386,21 @@ def webhook():
     # Try JSON first (legacy Pine webhook)
     data = request.get_json(force=True, silent=True)
     raw_body = request.data.decode("utf-8", errors="ignore")
+    qty_override = None
+    if isinstance(data, dict):
+        try:
+            qty_override = data.get("qty") or data.get("quantity")
+            if qty_override is not None:
+                qty_override = int(qty_override)
+        except Exception:
+            qty_override = None
+    if qty_override is None:
+        qty_qp = request.args.get("qty") or request.args.get("quantity")
+        if qty_qp:
+            try:
+                qty_override = int(qty_qp)
+            except Exception:
+                qty_override = None
 
     logging.info(f"Incoming webhook json: {data}")
 
@@ -419,7 +435,7 @@ def webhook():
         if needs_selection:
             direction = "LONG_CALL" if opt_type == "CE" else "LONG_PUT"
             try:
-                return _build_and_dispatch("LEGACY->PY", direction, "BREAKOUT", side)
+                return _build_and_dispatch("LEGACY->PY", direction, "BREAKOUT", side, qty_override)
             except Exception as exc:
                 logger.error(f"Legacy payload failed to build option: {exc}")
                 return jsonify({"status": "error", "detail": str(exc)}), 500
@@ -438,7 +454,7 @@ def webhook():
         return jsonify({"status": "ignored", "reason": "unrecognized_alert", "alert": alert_text}), 200
 
     try:
-        return _build_and_dispatch("PY-SIGNAL", direction, setup_type, side)
+        return _build_and_dispatch("PY-SIGNAL", direction, setup_type, side, qty_override)
     except ValueError as exc:
         # Common case: Fyers access token missing/not generated yet
         logger.error(f"Webhook blocked: {exc}")
