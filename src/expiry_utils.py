@@ -7,9 +7,8 @@ from datetime import date, datetime, time, timedelta
 from typing import Set, Literal
 import logging
 
-# Month code tables
-MONTH_LETTERS = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"]
-MONTH_3L      = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"]
+# Month code table (3-letter names used for monthly expiry symbols)
+MONTH_3L = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"]
 
 TradingCalendarKind = Literal["EQUITY_DERIVATIVES"]
 
@@ -129,13 +128,12 @@ def is_monthly_expiry(
 def format_weekly_expiry_code(expiry_d: date) -> str:
     """
     Weekly:
-      YY M dd  -> 25D02 for 2025-Dec-02
+      YY M dd  -> 26317 for 2026-Mar-17  (month as numeric, no leading zero)
     """
     yy = expiry_d.year % 100
-    mm = expiry_d.month
+    mm = expiry_d.month   # no leading zero (e.g. 3, not 03)
     dd = expiry_d.day
-    m_letter = MONTH_LETTERS[mm - 1]
-    return f"{yy:02d}{m_letter}{dd:02d}"
+    return f"{yy:02d}{mm}{dd:02d}"
 
 
 def format_monthly_expiry_code(expiry_d: date) -> str:
