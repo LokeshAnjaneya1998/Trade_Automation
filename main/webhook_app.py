@@ -50,6 +50,8 @@ logger = logging.getLogger(__name__)
 TRADING_ENABLED = True           # in-memory switch
 PREMARKET_FILTER_ENABLED = False # gate orders on premarket analysis when True
 CURRENT_SESSION_TOKEN: str | None = None  # track single active session
+NIFTY_LOT_SIZE = 65              # current NSE lot size for NIFTY options
+TRADING_LOTS = 1                 # number of lots to trade (configurable from dashboard)
 
 
 def set_trading_enabled(value: bool):
@@ -436,6 +438,9 @@ def webhook():
                 qty_override = int(qty_qp)
             except Exception:
                 qty_override = None
+    # Fall back to dashboard-configured lots when webhook doesn't specify qty
+    if qty_override is None:
+        qty_override = TRADING_LOTS * NIFTY_LOT_SIZE
 
     logger.info(f"Incoming webhook json: {data}")
 
@@ -690,6 +695,28 @@ def recent_orders():
     """
     orders = get_recent_orders()
     return jsonify({"orders": orders}), 200
+
+
+@app.route("/api/lots", methods=["GET"])
+@login_required
+def get_lots():
+    return jsonify({"lots": TRADING_LOTS, "lot_size": NIFTY_LOT_SIZE, "qty": TRADING_LOTS * NIFTY_LOT_SIZE}), 200
+
+
+@app.route("/api/lots", methods=["POST"])
+@login_required
+def set_lots():
+    global TRADING_LOTS
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        lots = int(data.get("lots", 1))
+        if lots < 1:
+            return jsonify({"status": "error", "detail": "Lots must be >= 1"}), 400
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "detail": "Invalid lots value"}), 400
+    TRADING_LOTS = lots
+    logger.info("TRADING_LOTS set to %d (qty=%d)", TRADING_LOTS, TRADING_LOTS * NIFTY_LOT_SIZE)
+    return jsonify({"status": "ok", "lots": TRADING_LOTS, "lot_size": NIFTY_LOT_SIZE, "qty": TRADING_LOTS * NIFTY_LOT_SIZE}), 200
 
 
 @app.route("/api/health", methods=["GET"])

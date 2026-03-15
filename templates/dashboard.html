@@ -116,6 +116,18 @@
                             Premarket Filter: {{ 'ON' if premarket_filter_enabled else 'OFF' }}
                         </button>
                     </form>
+                    <div style="border-top: 1px solid var(--border-subtle); padding-top: 10px;">
+                        <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:6px;">
+                            Lots per order <span style="color:var(--text-muted);">(1 lot = 65 qty)</span>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <input id="lots-input" type="number" min="1" step="1" value="1"
+                                   style="width:70px; padding:8px 10px; border-radius:8px; border:1px solid var(--border-subtle); background:#111827; color:var(--text-main); font-size:0.95rem; text-align:center;" />
+                            <span id="lots-qty-label" style="font-size:0.85rem; color:var(--text-muted);">= 65 qty</span>
+                            <button type="button" id="lots-set-btn" class="btn btn-blue" style="width:auto; padding:8px 14px; flex-shrink:0;">Set</button>
+                        </div>
+                        <div id="lots-status" style="font-size:0.8rem; margin-top:5px; color:var(--text-muted);"></div>
+                    </div>
                 </div>
             </div>
 
@@ -387,11 +399,69 @@
         }
     }
 
+    const LOT_SIZE = 65;
+
+    async function loadLots() {
+        try {
+            const { data } = await fetchJson("{{ url_for('get_lots') }}");
+            const input = document.getElementById("lots-input");
+            const label = document.getElementById("lots-qty-label");
+            if (input) input.value = data.lots;
+            if (label) label.textContent = `= ${data.qty} qty`;
+        } catch (err) {
+            console.error("Failed to load lots:", err);
+        }
+    }
+
+    async function saveLots() {
+        const input = document.getElementById("lots-input");
+        const btn = document.getElementById("lots-set-btn");
+        const status = document.getElementById("lots-status");
+        const label = document.getElementById("lots-qty-label");
+        const lots = parseInt(input ? input.value : "1", 10);
+        if (!lots || lots < 1) {
+            if (status) { status.textContent = "Enter a valid number >= 1"; status.style.color = "#ef4444"; }
+            return;
+        }
+        if (btn) { btn.disabled = true; btn.textContent = "Saving..."; }
+        try {
+            const res = await fetch("{{ url_for('set_lots') }}", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ lots }),
+            });
+            const data = await res.json();
+            if (data.status === "ok") {
+                if (label) label.textContent = `= ${data.qty} qty`;
+                if (status) { status.textContent = `Saved — ${data.lots} lot${data.lots > 1 ? "s" : ""} × ${LOT_SIZE} = ${data.qty} qty`; status.style.color = "#22c55e"; }
+            } else {
+                if (status) { status.textContent = data.detail || "Error saving"; status.style.color = "#ef4444"; }
+            }
+        } catch (err) {
+            if (status) { status.textContent = "Save failed: " + err; status.style.color = "#ef4444"; }
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = "Set"; }
+        }
+    }
+
     document.addEventListener("DOMContentLoaded", function () {
         loadPremarket();
         loadLastOrder();
         loadHealth();
         loadRecentOrders();
+        loadLots();
+
+        const lotsInput = document.getElementById("lots-input");
+        const lotsLabel = document.getElementById("lots-qty-label");
+        if (lotsInput) {
+            lotsInput.addEventListener("input", function () {
+                const v = parseInt(lotsInput.value, 10);
+                if (lotsLabel && v > 0) lotsLabel.textContent = `= ${v * LOT_SIZE} qty`;
+            });
+        }
+        const lotsBtn = document.getElementById("lots-set-btn");
+        if (lotsBtn) lotsBtn.addEventListener("click", saveLots);
         // lightweight polling to approximate real-time updates
         setInterval(() => loadLastOrder(true), 4000);
         setInterval(() => loadRecentOrders(true), 6000);

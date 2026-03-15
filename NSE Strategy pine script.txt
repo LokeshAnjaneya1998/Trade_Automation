@@ -13,110 +13,16 @@ strategy("NIFTY ORB (Options) – 5m",
          pyramiding         = 2)
 
 // ═════════════ Option params (AUTO month-letter code or MANUAL) ══════════════
-var label cfg = na
-useAutoExpiry = input.bool(true, "Auto weekly expiry (next Tue, IST)")
-optExpiry     = input.string("YYMDD", "Manual expiry code (YY{MonthLetter}DD; e.g., 25O07=2025-Oct-07)")
-optQty        = input.int(75,  "Option qty (per alert)")
-strikeStep    = input.int(50,  "Strike step")
-callOffset    = input.int(200, "CE offset (+pts)")
-putOffset     = input.int(100, "PE offset (−pts)")
-dayofWeek     = input.int(3, "Day of the week")
-symPrefix     = input.string("NSE:", "Symbol prefix (e.g., NSE:, NFO:, or blank)")
-underlyingSym = input.string("NIFTY", "Underlying in option code (NIFTY/BANKNIFTY)")
+optQty = input.int(75, "Option qty (per alert)")
 
 ceil_to_step(v, s)  => s == 0 ? v : math.ceil(v/s)*s
 floor_to_step(v, s) => s == 0 ? v : math.floor(v/s)*s
 
 var string TZ = "Asia/Kolkata"
 
-//──────────────────────────────────────────────────────────────
-// EXPIRY HELPERS — Stable, direct weekday math (IST, no loops)
-//──────────────────────────────────────────────────────────────
-var string[] MONTH_LETTERS = array.from("J","F","M","A","M","J","J","A","S","O","N","D")
-var string[] MONTH_3L      = array.from("JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC")
-
-add_days(ts, d) =>
-    ts + d * 24 * 60 * 60 * 1000
-
-_todayY() => year(timenow, TZ)
-_todayM() => month(timenow, TZ)
-_todayD() => dayofmonth(timenow, TZ)
-
-// Midnight IST today
-midnight_today_ist() =>
-    timestamp(TZ, _todayY(), _todayM(), _todayD(), 0, 0)
-
-// After market close?
-is_after_close_ist() =>
-    timenow >= timestamp(TZ, _todayY(), _todayM(), _todayD(), 15, 30)
-
-// Compute next expiry timestamp directly
-next_expiry_ts(targetDow) =>
-    base     = midnight_today_ist()
-    curDow   = dayofweek(timenow, TZ)            // 1=Mon .. 7=Sun
-    // distance to next target weekday (0..6)
-    offset   = (targetDow - curDow + 7) % 7
-    // If today is target day
-    offset   := offset == 0 ? (is_after_close_ist() ? 7 : 0) : offset
-    add_days(base, offset)
-
-// Monthly detection: adding 7 days crosses month ⇒ last such weekday in month
-is_last_weekday_of_month(ts) =>
-    month(ts, TZ) != month(add_days(ts, 7), TZ)
-
-// Formatters
-format_weekly_code(ts) =>
-    yy = year(ts, TZ) % 100
-    mm = month(ts, TZ)
-    dd = dayofmonth(ts, TZ)
-    mL = array.get(MONTH_LETTERS, mm - 1)
-    str.tostring(yy, "00") + mL + str.tostring(dd, "00")
-
-format_monthly_code(ts) =>
-    yy = year(ts, TZ) % 100
-    mm = month(ts, TZ)
-    dd = dayofmonth(ts, TZ)
-    m3 = array.get(MONTH_3L, mm - 1)
-    str.tostring(yy, "00") + m3
-
-get_expiry_code() =>
-    if not useAutoExpiry
-        str.upper(optExpiry)
-    else
-        ts = next_expiry_ts(dayofWeek)
-        is_last_weekday_of_month(ts) ? format_monthly_code(ts) : format_weekly_code(ts)
-
-
-
-// Draw debug label of actual selected date
-var label dbg = na
-if barstate.islast
-    expiryCode = get_expiry_code()
-    tsSel = next_expiry_ts(dayofWeek)
-    debugTxt = "SelDate=" + str.format_time(tsSel, "yyyy-MMM-dd", TZ) + " | Code=" + expiryCode
-    if not na(dbg)
-        label.delete(dbg)
-    //dbg := label.new(bar_index, high, debugTxt, style=label.style_label_down, textcolor=color.yellow)
-
-
-// Build option symbol (computed at runtime)
-build_opt_symbol(isCall, px) =>
-    strike = isCall ? ceil_to_step(px + callOffset, strikeStep) : floor_to_step(px - putOffset, strikeStep)
-    expiry = get_expiry_code()
-    symPrefix + underlyingSym + expiry + str.tostring(strike) + (isCall ? "CE" : "PE")
-
 // Webhook payloads
-build_json_qty(sym, side, qty) =>
-    '{"event":"place_order","order_details":{"symbol":"' + sym + '","qty":' + str.tostring(qty) + ',"type":2,"side":"' + side + '","productType":"INTRADAY","limitPrice":0,"stopPrice":0,"validity":"DAY","disclosedQty":0,"offlineOrder":false,"stopLoss":0,"takeProfit":0}}'
-
-// (Optional) show effective expiry
-if barstate.islast
-    labTxtplot      = input.bool(true,  "display expiry")
-    labTxt = "Expiry=" + get_expiry_code() + " (" + (useAutoExpiry ? "AUTO" : "MANUAL") + ")"
-    if not na(cfg)
-        label.delete(cfg)
-    if labTxtplot
-        cfg := label.new(bar_index, high, labTxt, style=label.style_label_down, textcolor=color.white)
+build_json_qty(sym, side, qty, opt) =>
+    '{"event":"place_order","order_details":{"symbol":"' + sym + '","qty":' + str.tostring(qty) + ',"type":2,"side":"' + side + '","productType":"INTRADAY","limitPrice":0,"stopPrice":0,"validity":"DAY", "optType": "' + opt + '"}}'
 
 // ══════════════════ ORB inputs ═══════════════════════════════════════════════
 stopBufferPts  = input.float(2.0,  "Stop-loss buffer (pts)", step = 0.25)
@@ -175,14 +81,10 @@ else if not rangeLocked and not na(orHigh) and not na(orLow)
 if inORbuild10
     orHigh10 := math.max(nz(orHigh10, high), high)
     orLow10  := math.min(nz(orLow10 , low ),  low )
-else if not rangeLocked and not na(orHigh) and not na(orLow)
-    rangeLocked := true
 
 if inORbuild15
     orHigh15 := math.max(nz(orHigh15, high), high)
     orLow15  := math.min(nz(orLow15 , low ),  low )
-else if not rangeLocked and not na(orHigh) and not na(orLow)
-    rangeLocked := true
 
 plot(plotRange and rangeLocked ? orHigh : na, "OR High", color=color.green, linewidth=2)
 plot(plotRange and rangeLocked ? orLow  : na,  "OR Low",  color=color.red,   linewidth=2)
@@ -202,7 +104,8 @@ var bool shortRetouching = false
 thickGreen = close > open and (close - open) / math.max(high - low, 1e-6) >= 0.35
 thickRed   = open > close and (open - close) / math.max(high - low, 1e-6) >= 0.35
 
-inRangeFirst5 = orHigh10 > orHigh or orLow10 < orLow or orHigh15 > orHigh or orLow15 < orLow
+// True when the 2nd or 3rd 5-min candle extends the 1st candle's range — skips flat/sideways opens.
+orExpanded    = orHigh10 > orHigh or orLow10 < orLow or orHigh15 > orHigh or orLow15 < orLow
 
 // Breakout (bar-close gated)
 defLongBreak  = rangeLocked and finalBar and open + 6 > orHigh and close > orHigh
@@ -219,7 +122,7 @@ volOK       = atrSeries > atrMedian
 orWidth  = orHigh - orLow
 stretch  = orWidth / atrSeries
 
-riskReward = stretch > 3 ? 0.75 : 3.0
+riskReward = stretch > 1.6 ? 0.75 : 3.0
 maxLossInr = input.int(8700, "Catastrophe-stop ₹ risk", minval = 1000, step = 500)
 lotQty     = 75
 maxLossPts = maxLossInr / lotQty
@@ -229,6 +132,7 @@ volOKVol   = volume > ta.sma(volume, 20) * 0.3
 // Long (CE) bucket
 var bool   L_active   = false
 var string L_sym      = ""
+var string L_opt      = ""
 var int    L_qty      = 0
 var float  L_sl       = na
 var float  L_tp       = na
@@ -237,6 +141,7 @@ var int    L_openBar  = na  // last entry bar for same-bar guard
 // Short (PE) bucket
 var bool   S_active   = false
 var string S_sym      = ""
+var string S_opt      = ""
 var int    S_qty      = 0
 var float  S_sl       = na
 var float  S_tp       = na
@@ -244,8 +149,8 @@ var int    S_openBar  = na
 
 // Reset buckets each new day
 if newDay
-    L_active := false, L_sym := "", L_qty := 0, L_sl := na, L_tp := na, L_openBar := na
-    S_active := false, S_sym := "", S_qty := 0, S_sl := na, S_tp := na, S_openBar := na
+    L_active := false, L_sym := "", L_opt := "", L_qty := 0, L_sl := na, L_tp := na, L_openBar := na
+    S_active := false, S_sym := "", S_opt := "", S_qty := 0, S_sl := na, S_tp := na, S_openBar := na
     longState  := 0
     shortState := 0
     longRetests := 0
@@ -287,7 +192,7 @@ if finalBar
             shortRetouching := false
 
 // ══════════════════ Main logic (entries bar-close confirmed) ═════════════════
-if rangeLocked and inRangeFirst5
+if rangeLocked and orExpanded
     // LONG
     if longState == 0 and defLongBreak and volOK
         longState      := 1
@@ -317,28 +222,29 @@ if rangeLocked and inRangeFirst5
             // Strategy position (unchanged)
             strategy.entry("Long", strategy.long,
                            comment = "d=" + str.tostring(bar_index - longBaseBar) + ",r=" + str.tostring(longRetests) + ",s=" + str.tostring(stretch))
-            if catStopLong > slBase
-                strategy.exit("L-Cap", from_entry="Long", stop = catStopLong, comment = "cap")
-            strategy.exit("L-Exit", from_entry="Long", stop = slBase, limit = tp, comment = "TP/SL")
+            strategy.exit("L-Exit", from_entry="Long", stop = actSL_long, limit = tp, comment = "TP/SL")
 
             // ── Bucketed alerts (aggregate qty, single symbol per day) ──
             if not L_active
                 // First long of the day → pick symbol and seed bucket
-                L_sym     := build_opt_symbol(true, entry)
+                L_sym     := "NSE:NIFTY50-INDEX"
+                L_opt     := "CE"
                 L_qty     := optQty
                 L_sl      := actSL_long
                 L_tp      := tp
                 L_openBar := bar_index
                 L_active  := true
-                alert(build_json_qty(L_sym, "buy", optQty), alert.freq_once_per_bar)
+                alert(build_json_qty(L_sym, "1", optQty, L_opt), alert.freq_once_per_bar)
             else
                 // Add-on: use same symbol, accumulate qty, tighten stops if needed
+                L_sym     := "NSE:NIFTY50-INDEX"
+                L_opt     := "CE"
                 L_qty += optQty
                 L_sl   := math.max(L_sl, actSL_long) // for longs, tighter (higher) stop dominates
                 // Keep TP as the *nearest* of existing/new to increase chance of a single exit
                 L_tp   := math.min(L_tp, tp)
                 L_openBar := bar_index
-                alert(build_json_qty(L_sym, "buy", optQty), alert.freq_once_per_bar)
+                alert(build_json_qty(L_sym, "1", optQty, L_opt), alert.freq_once_per_bar)
 
             longState := 0
             longRetouching := false
@@ -372,25 +278,26 @@ if rangeLocked and inRangeFirst5
 
             strategy.entry("Short", strategy.short,
                            comment = "d=" + str.tostring(bar_index - shortBaseBar) + ",r=" + str.tostring(shortRetests) + ",s=" + str.tostring(stretch))
-            if catStopShort < slBase
-                strategy.exit("S-Cap", from_entry="Short", stop = catStopShort, comment = "cap")
-            strategy.exit("S-Exit", from_entry="Short", stop = slBase, limit = tp, comment = "TP/SL")
+            strategy.exit("S-Exit", from_entry="Short", stop = actSL_short, limit = tp, comment = "TP/SL")
 
             // Bucketed alerts for shorts
             if not S_active
-                S_sym     := build_opt_symbol(false, entry)
+                S_sym     := "NSE:NIFTY50-INDEX"
+                S_opt     := "PE"
                 S_qty     := optQty
                 S_sl      := actSL_short
                 S_tp      := tp
                 S_openBar := bar_index
                 S_active  := true
-                alert(build_json_qty(S_sym, "buy", optQty), alert.freq_once_per_bar)
+                alert(build_json_qty(S_sym, "1", optQty, S_opt), alert.freq_once_per_bar)
             else
+                S_sym     := "NSE:NIFTY50-INDEX"
+                S_opt     := "PE"
                 S_qty += optQty
                 S_sl   := math.min(S_sl, actSL_short) // for shorts, tighter (lower) stop dominates
                 S_tp   := math.max(S_tp, tp)          // nearest TP for shorts is the larger (less room down)
                 S_openBar := bar_index
-                alert(build_json_qty(S_sym, "buy", optQty), alert.freq_once_per_bar)
+                alert(build_json_qty(S_sym, "1", optQty, S_opt), alert.freq_once_per_bar)
 
             shortState := 0
             shortRetouching := false
@@ -403,15 +310,15 @@ if L_active
     if bar_index != L_openBar
         // Long: exit if TP hit (high >= L_tp) or SL hit (low <= L_sl)
         if (high >= L_tp) or (low <= L_sl)
-            alert(build_json_qty(L_sym, "sell", L_qty), alert.freq_once_per_bar)
-            L_active := false, L_sym := "", L_qty := 0, L_sl := na, L_tp := na, L_openBar := na
+            alert(build_json_qty(L_sym, "-1", L_qty, L_opt), alert.freq_once_per_bar)
+            L_active := false, L_sym := "", L_opt := "", L_qty := 0, L_sl := na, L_tp := na, L_openBar := na
 
 if S_active
     if bar_index != S_openBar
         // Short: exit if TP hit (low <= S_tp) or SL hit (high >= S_sl)
         if (low <= S_tp) or (high >= S_sl)
-            alert(build_json_qty(S_sym, "sell", S_qty), alert.freq_once_per_bar)
-            S_active := false, S_sym := "", S_qty := 0, S_sl := na, S_tp := na, S_openBar := na
+            alert(build_json_qty(S_sym, "-1", S_qty, S_opt), alert.freq_once_per_bar)
+            S_active := false, S_sym := "", S_opt := "", S_qty := 0, S_sl := na, S_tp := na, S_openBar := na
 
 
 // ════════════════ Combined max loss across all open trades ══════════════════
@@ -434,18 +341,20 @@ if strategy.opentrades > 0
         // Flatten options buckets + send exit alerts
 
         if L_active
-            alert(build_json_qty(L_sym, "sell", L_qty), alert.freq_once_per_bar)
+            alert(build_json_qty(L_sym, "-1", L_qty, L_opt), alert.freq_once_per_bar)
             L_active  := false
             L_sym     := ""
+            L_opt     := ""
             L_qty     := 0
             L_sl      := na
             L_tp      := na
             L_openBar := na
 
         if S_active
-            alert(build_json_qty(S_sym, "sell", S_qty), alert.freq_once_per_bar)
+            alert(build_json_qty(S_sym, "-1", S_qty, S_opt), alert.freq_once_per_bar)
             S_active  := false
             S_sym     := ""
+            S_opt     := ""
             S_qty     := 0
             S_sl      := na
             S_tp      := na
@@ -460,11 +369,11 @@ if newDay
 
 if time >= endTime and not eodAlertSent
     if L_active
-        alert(build_json_qty(L_sym, "sell", L_qty), alert.freq_once_per_bar)
-        L_active := false, L_sym := "", L_qty := 0, L_sl := na, L_tp := na, L_openBar := na
+        alert(build_json_qty(L_sym, "-1", L_qty, L_opt), alert.freq_once_per_bar)
+        L_active := false, L_sym := "", L_opt := "", L_qty := 0, L_sl := na, L_tp := na, L_openBar := na
     if S_active
-        alert(build_json_qty(S_sym, "sell", S_qty), alert.freq_once_per_bar)
-        S_active := false, S_sym := "", S_qty := 0, S_sl := na, S_tp := na, S_openBar := na
+        alert(build_json_qty(S_sym, "-1", S_qty, S_opt), alert.freq_once_per_bar)
+        S_active := false, S_sym := "", S_opt := "", S_qty := 0, S_sl := na, S_tp := na, S_openBar := na
     eodAlertSent := true
 
 // ══════════════════ Strategy forced flat at session end ══════════════════════

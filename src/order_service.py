@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import threading
 import time
 from datetime import datetime, date, time as dt_time
@@ -396,6 +397,67 @@ def compute_cached_oi_pressure(search_window: float = 200.0):
     }
 
 
+def _parse_strike_from_symbol(symbol: str, opt_type: str) -> int | None:
+    """Extract strike from a Fyers option symbol (e.g. NSE:NIFTY25MAR24000CE -> 24000)."""
+    clean = symbol.upper().replace("NSE:", "").replace("BSE:", "")
+    if clean.endswith(opt_type):
+        clean = clean[: -len(opt_type)]
+    m = re.search(r"(\d+)$", clean)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            pass
+    return None
+
+
+def _recover_entry_from_fyers(fyers_integration, opt_type: str, today) -> dict | None:
+    """
+    Rebuild ENTRY_TRACKER from live Fyers net-positions after a mid-day restart.
+    Looks for an open net-long NIFTY position in the given opt_type (CE or PE).
+    Returns an entry dict or None if no match is found.
+    """
+    try:
+        fyers = fyers_integration.get_fyers_instance()
+        resp = fyers.positions()
+        raw = resp if isinstance(resp, dict) else {}
+        net_positions = (
+            raw.get("netPositions")
+            or raw.get("net_positions")
+            or (raw.get("data") or {}).get("netPositions")
+            or []
+        )
+        for pos in net_positions:
+            symbol = str(pos.get("symbol") or "")
+            net_qty = int(
+                pos.get("netQty") or pos.get("net_qty") or pos.get("qty") or 0
+            )
+            if net_qty <= 0:
+                continue
+            if opt_type not in symbol.upper():
+                continue
+            if "NIFTY" not in symbol.upper():
+                continue
+            strike = _parse_strike_from_symbol(symbol, opt_type)
+            if strike is None:
+                logger.warning("Recovery: could not parse strike from symbol %s", symbol)
+                continue
+            logger.info(
+                "ENTRY_TRACKER recovered from Fyers positions: opt=%s symbol=%s qty=%d strike=%d",
+                opt_type, symbol, net_qty, strike,
+            )
+            return {
+                "date": today,
+                "strike": strike,
+                "expiry_date": None,
+                "symbol": symbol,
+                "total_qty": net_qty,
+            }
+    except Exception as exc:
+        logger.warning("ENTRY_TRACKER recovery from Fyers positions failed: %s", exc)
+    return None
+
+
 def build_order_details_from_signal(
     fyers_integration,
     direction: str,
@@ -425,7 +487,7 @@ def _build_order_details_locked(
 
     # ── qty resolution ──────────────────────────────────────────
     if qty is None:
-        qty_final = 75
+        qty_final = 65
     else:
         try:
             qty_final = int(qty)
@@ -457,6 +519,12 @@ def _build_order_details_locked(
 
     # ── EXIT path ───────────────────────────────────────────────
     if setup_type == "EXIT":
+        if entry_rec is None:
+            # Bot may have restarted mid-day; try to recover from live Fyers positions.
+            recovered = _recover_entry_from_fyers(fyers_integration, opt_type, today)
+            if recovered:
+                ENTRY_TRACKER[opt_type] = recovered
+                entry_rec = recovered
         if entry_rec is None:
             raise ValueError(f"No tracked entry for {opt_type} today; cannot exit same strike.")
         exit_qty = entry_rec.get("total_qty", qty_final)
