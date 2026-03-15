@@ -108,6 +108,14 @@
                     <button type="button" class="btn btn-blue" disabled>Authentication link (not yet available)</button>
                     {% endif %}
                     <button type="button" class="btn btn-yellow" onclick="window.open('{{ url_for('logs_only') }}', '_blank');">Recent logs (full page)</button>
+                    <form method="POST" action="{{ url_for('toggle_premarket_filter') }}" class="needs-confirm"
+                          data-confirm="Toggle premarket filter?">
+                        <input type="hidden" name="token" value="{{ admin_token }}">
+                        <button type="submit" class="btn {% if premarket_filter_enabled %}btn-green{% else %}btn-red{% endif %}"
+                                style="width:100%;">
+                            Premarket Filter: {{ 'ON' if premarket_filter_enabled else 'OFF' }}
+                        </button>
+                    </form>
                 </div>
             </div>
 

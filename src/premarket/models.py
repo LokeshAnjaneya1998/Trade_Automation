@@ -5,15 +5,6 @@ from typing import Optional, List, Dict, Any
 
 
 @dataclass
-class GlobalSnapshot:
-    spx_change: float
-    nasdaq_change: float
-    vix_change: float
-    crude_change: float
-    risk_mood: str
-
-
-@dataclass
 class NiftyRegime:
     atr_20: float
     day_range_prev: float
@@ -38,7 +29,6 @@ class PremarketSummary:
     nifty_regime: NiftyRegime
     india_vix: float
     oi_pressure: Optional[OIPressure]
-    global_snapshot: Optional[GlobalSnapshot] = None
 
 
 @dataclass

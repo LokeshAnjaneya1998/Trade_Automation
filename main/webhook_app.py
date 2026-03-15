@@ -37,6 +37,7 @@ from src.order_service import (
     get_recent_orders,
     get_option_chain_cache_info,
     get_profile_snapshot,
+    check_market_open,
 )
 
 
@@ -46,14 +47,47 @@ from src.order_service import (
 
 logger = logging.getLogger(__name__)
 
-TRADING_ENABLED = True  # in-memory switch
+TRADING_ENABLED = True           # in-memory switch
+PREMARKET_FILTER_ENABLED = False # gate orders on premarket analysis when True
 CURRENT_SESSION_TOKEN: str | None = None  # track single active session
 
 
 def set_trading_enabled(value: bool):
     global TRADING_ENABLED
     TRADING_ENABLED = value
-    logging.info(f"TRADING_ENABLED set to {TRADING_ENABLED}")
+    logger.info(f"TRADING_ENABLED set to {TRADING_ENABLED}")
+
+
+def _premarket_allows_trade(direction: str) -> tuple[bool, str]:
+    """
+    Check premarket trend + OI conditions for the trade direction.
+    Trend comes from the 120s premarket cache; OI uses the 20s option-chain cache
+    so the gate reacts to live market shifts rather than a 2-minute-old snapshot.
+    Fails open (allows trade) if no data available — stale cache never silently blocks.
+    """
+    try:
+        cached = premarket_analyzer._cache.get("data")
+        if not cached:
+            return True, "no_premarket_data"
+        nr = (cached.get("summary") or {}).get("nifty_regime", {})
+        trend = nr.get("trend_regime", "")
+
+        # Prefer fresh OI (20s TTL) over the 120s premarket snapshot
+        live_oi = compute_cached_oi_pressure()
+        if live_oi:
+            pressure = live_oi.get("pressure", "")
+        else:
+            pressure = ((cached.get("summary") or {}).get("oi_pressure") or {}).get("pressure", "")
+
+        is_call = direction == "LONG_CALL"
+        trend_ok = ("Uptrend" in trend) if is_call else ("Downtrend" in trend)
+        oi_ok = ("PE-heavy" in pressure) if is_call else ("CE-heavy" in pressure)
+        if not trend_ok and not oi_ok:
+            return False, f"premarket_blocked: trend={trend!r} oi={pressure!r}"
+        return True, "passed"
+    except Exception as exc:
+        logger.warning("Premarket filter check error: %s", exc)
+        return True, "check_error"
 
 
 # ──────────────────────────────────────────────────────────────
@@ -277,6 +311,7 @@ def dashboard():
         admin_token=ADMIN_TOKEN,
         status_text=status_text,
         status_color=status_color,
+        premarket_filter_enabled=PREMARKET_FILTER_ENABLED,
     )
 
 
@@ -378,8 +413,8 @@ def webhook():
                 return jsonify({"status": "error", "detail": "Fyers throttled (429) while fetching quotes; retry shortly."}), 503
             logger.error("Order build failed: %s", msg)
             return jsonify({"status": "error", "detail": msg}), 500
-        logging.info(f"[{mode}] {note}")
-        logging.info(f"[{mode}] Order details: {order_details}")
+        logger.info(f"[{mode}] {note}")
+        logger.info(f"[{mode}] Order details: {order_details}")
         dispatch_order(fyers_integration, order_details)
         return jsonify({"status": "order_processing_initiated", "mode": mode}), 200
 
@@ -402,11 +437,26 @@ def webhook():
             except Exception:
                 qty_override = None
 
-    logging.info(f"Incoming webhook json: {data}")
+    logger.info(f"Incoming webhook json: {data}")
 
     if not TRADING_ENABLED:
-        logging.info("Webhook received but TRADING_ENABLED is False. Ignoring order.")
+        logger.info("Webhook received but TRADING_ENABLED is False. Ignoring order.")
         return jsonify({"status": "ignored", "reason": "trading_paused"}), 200
+
+    is_open, market_reason = check_market_open(fyers_integration)
+    if not is_open:
+        logger.info("Webhook received but market is closed (%s). Ignoring order.", market_reason)
+        return jsonify({"status": "ignored", "reason": f"market_closed:{market_reason}"}), 200
+
+    # Premarket filter gate — checked per signal direction after parsing
+    def _apply_premarket_gate(direction: str):
+        if not PREMARKET_FILTER_ENABLED:
+            return None  # filter off, proceed
+        allowed, reason = _premarket_allows_trade(direction)
+        if not allowed:
+            logger.info("Premarket filter blocked order: %s", reason)
+            return jsonify({"status": "ignored", "reason": reason}), 200
+        return None
 
     # ───────────── Legacy mode: Pine sends full JSON ─────────────
     if isinstance(data, dict) and data.get("event") == "place_order":
@@ -434,8 +484,12 @@ def webhook():
 
         if needs_selection:
             direction = "LONG_CALL" if opt_type == "CE" else "LONG_PUT"
+            gate = _apply_premarket_gate(direction)
+            if gate:
+                return gate
             try:
-                return _build_and_dispatch("LEGACY->PY", direction, "BREAKOUT", side, qty_override)
+                setup_type_inferred = "EXIT" if str(side) in {"-1", "sell", "-"} else "BREAKOUT"
+                return _build_and_dispatch("LEGACY->PY", direction, setup_type_inferred, side, qty_override)
             except Exception as exc:
                 logger.error(f"Legacy payload failed to build option: {exc}")
                 return jsonify({"status": "error", "detail": str(exc)}), 500
@@ -452,6 +506,10 @@ def webhook():
 
     if not side or not direction or not setup_type:
         return jsonify({"status": "ignored", "reason": "unrecognized_alert", "alert": alert_text}), 200
+
+    gate = _apply_premarket_gate(direction)
+    if gate:
+        return gate
 
     try:
         return _build_and_dispatch("PY-SIGNAL", direction, setup_type, side, qty_override)
@@ -531,6 +589,25 @@ def pause_trading():
         "message.html",
         title="Trading paused",
         message="Trading paused (no orders will be sent). Redirecting to dashboard...",
+        redirect_url=url_for("dashboard"),
+        delay_ms=1000,
+    )
+
+
+@app.route("/toggle_premarket_filter", methods=["POST"])
+@login_required
+def toggle_premarket_filter():
+    global PREMARKET_FILTER_ENABLED
+    token = request.form.get("token") or request.args.get("token")
+    if ADMIN_TOKEN and token != ADMIN_TOKEN:
+        abort(403)
+    PREMARKET_FILTER_ENABLED = not PREMARKET_FILTER_ENABLED
+    state = "enabled" if PREMARKET_FILTER_ENABLED else "disabled"
+    logger.info("Premarket filter %s", state)
+    return render_template(
+        "message.html",
+        title=f"Premarket filter {state}",
+        message=f"Premarket filter {state}. Redirecting to dashboard...",
         redirect_url=url_for("dashboard"),
         delay_ms=1000,
     )

@@ -8,7 +8,6 @@ from typing import Tuple
 
 import pytz
 
-from src.option_selection import OptionSelection, select_nifty_option_for_signal
 from src.calendar_loader import get_nse_trading_calendar_for_current_year
 from src.premarket.services import OptionChainService
 from src.expiry_utils import fyers_nifty_option_symbol
@@ -27,12 +26,16 @@ _OPTION_CHAIN_LOCK = threading.Lock()
 _OPTION_CHAIN_INFLIGHT = False
 _OPTION_CHAIN_LAST_ERROR_TS = 0.0
 _OPTION_CHAIN_HAD_ERROR = False
+_MARKET_STATUS_CACHE: dict = {"ts": 0.0, "open": None, "reason": ""}
+_MARKET_STATUS_LOCK = threading.Lock()
+_MARKET_STATUS_INFLIGHT = False
 LAST_ORDER = {}
 LAST_ORDERS = deque(maxlen=5)
 PROFILE_CACHE = {"ts": 0.0, "data": None}
 LAST_SPOT_PRICE: float | None = None
 # Track first entry per opt type (CE/PE) per day to reuse same strike for add-ons and exits.
 ENTRY_TRACKER: dict[str, dict] = {"CE": None, "PE": None}
+_ENTRY_TRACKER_LOCK = threading.Lock()
 
 
 # -------------------- Strike helpers --------------------
@@ -75,23 +78,35 @@ def select_strike(
     opt_type: str,
     signal_time: datetime,
     is_expiry_day: bool,
+    setup_type: str = "BREAKOUT",
     iv_percent: float | None = None,
     momentum_flag: bool | None = None,
+    oi_confirms: bool | None = None,
 ) -> int:
     """
-    Select NIFTY strike based on time-of-day, expiry bias, IV and momentum.
+    Select NIFTY strike based on time-of-day, setup type, and expiry day.
 
-    Tiers:
-      - <11:00 -> ATM
-      - 11:00-13:00 -> ATM (upgrade to ITM if strong momentum or high IV)
-      - 13:00-14:30 -> ITM
-      - >14:30 -> Deep ITM
-    Expiry bias:
-      - After 13:00 on expiry -> at least ITM
-      - After 14:30 on expiry -> Deep ITM always
-    IV bias (if available):
-      - IV >= 15 -> upgrade one tier unless early and strong momentum
-      - IV <= 12 -> keep baseline
+    REVERSAL trades:
+      - Always ATM regardless of time or expiry — short counter-moves need
+        high delta, not a gamma lottery ticket.
+
+    Expiry day (gamma play, BREAKOUT/ADD_ON only):
+      - BREAKOUT -> OTM (single step out of money, max gamma leverage)
+      - Other    -> ATM (safe fallback)
+
+    Non-expiry day tiers (time-of-day):
+      - <11:00        -> ATM
+      - 11:00-13:00   -> ATM (upgrade to ITM on high IV or strong momentum)
+      - 13:00-14:30   -> ITM
+      - >14:30        -> Deep ITM
+
+    OI modifier (oi_confirms):
+      - True  -> OI aligns with direction; no change (already aggressive)
+      - False -> OI contradicts direction; shift one step toward ATM/ITM
+      - None  -> Balanced OI or unavailable; no change
+
+    IV nudge (if provided):
+      - IV >= 15 -> upgrade one tier (applied before OI modifier)
     """
     if opt_type not in {"CE", "PE"}:
         raise ValueError("opt_type must be 'CE' or 'PE'")
@@ -100,21 +115,34 @@ def select_strike(
 
     atm = round_to_nearest_strike(spot_price, 50)
     if opt_type == "CE":
-        itm = atm - 50
+        otm      = atm + 50
+        itm      = atm - 50
         deep_itm = atm - 100
     else:
-        itm = atm + 50
+        otm      = atm - 50
+        itm      = atm + 50
         deep_itm = atm + 100
 
-    # keep strikes sensible
     lower_bound = max(0, atm - 800)
     upper_bound = atm + 800
 
     def clamp(x: int) -> int:
         return max(lower_bound, min(upper_bound, x))
 
+    # REVERSAL: always ATM — counter-trend moves are short and sharp;
+    # delta matters more than leverage here.
+    if setup_type == "REVERSAL":
+        return clamp(atm)
+
+    # Expiry day: gamma play — OTM for breakout, ATM otherwise
+    if is_expiry_day:
+        strike = otm if setup_type == "BREAKOUT" else atm
+        # OI modifier still applies on expiry day
+        if oi_confirms is False and strike == otm:
+            strike = atm  # OTM -> ATM when OI contradicts
+        return clamp(strike)
+
     t = signal_time.time()
-    tier = "ATM"
     if t >= dt_time(14, 30):
         tier = "DEEP_ITM"
     elif t >= dt_time(13, 0):
@@ -124,13 +152,7 @@ def select_strike(
     else:
         tier = "ATM"
 
-    if is_expiry_day:
-        if t >= dt_time(14, 30):
-            tier = "DEEP_ITM"
-        elif t >= dt_time(13, 0):
-            tier = "ITM"
-
-    # IV and momentum nudges
+    # IV nudge
     if iv_percent is not None and iv_percent >= 15:
         if not (t < dt_time(11, 0) and momentum_flag):
             if tier == "ATM":
@@ -140,7 +162,8 @@ def select_strike(
             elif tier == "ITM":
                 tier = "DEEP_ITM"
 
-    if momentum_flag and t < dt_time(13, 0) and not is_expiry_day:
+    # Momentum: keep ATM when momentum is strong and it's early
+    if momentum_flag and t < dt_time(13, 0):
         tier = "ATM" if tier in {"ATM_OR_ITM", "ATM"} else tier
 
     if tier == "DEEP_ITM":
@@ -151,6 +174,16 @@ def select_strike(
         strike = itm if (momentum_flag or (iv_percent and iv_percent > 15)) else atm
     else:
         strike = atm
+
+    # OI modifier: if OI contradicts direction, shift one step toward ATM
+    if oi_confirms is False:
+        if strike == deep_itm:
+            strike = itm
+            logger.debug("OI contradicts — strike shifted DEEP_ITM -> ITM")
+        elif strike == itm:
+            strike = atm
+            logger.debug("OI contradicts — strike shifted ITM -> ATM")
+        # ATM stays ATM (already most conservative)
 
     return clamp(strike)
 
@@ -326,111 +359,25 @@ def fetch_nifty_spot_price(fyers_integration) -> float:
     )
 
 
-def choose_nifty_option_from_signal(
-    spot_price: float,
-    direction: str,
-    setup_type: str,
-    calendar=None,
-):
-    now_ist = datetime.now(IST)
-    calendar = calendar or TRADING_CALENDAR
-
-    selection = select_nifty_option_for_signal(
-        now_ist=now_ist,
-        spot_price=spot_price,
-        direction=direction,   # "LONG_CALL" / "LONG_PUT"
-        setup_type=setup_type, # "BREAKOUT" / "REVERSAL"
-        calendar=calendar,
-        expiry_weekday=1,      # legacy Tuesday expectation in this codebase
-        strike_step=50,
-        underlying="NIFTY",
-        exchange_prefix="NSE:",
-    )
-    return selection
-
-
-def select_option_from_chain(
-    *,
-    spot_price: float,
-    direction: str,
-    setup_type: str,
-    calendar,
-    strike_step: int = 50,
-    search_window: int = 200,
-) -> OptionSelection | None:
+def _get_expiry_from_chain(calendar) -> date:
     """
-    Pick the most liquid strike near ATM using NSE option chain OI/volume.
-    Falls back to calendar-based selection if anything goes wrong.
+    Extract expiry date from cached option chain.
+    Falls back to calendar-based computation if chain is unavailable.
     """
     raw = get_cached_option_chain()
-    if not raw:
-        return None
-
-    filtered = raw.get("filtered", {}) or {}
-    rows = filtered.get("data") or raw.get("records", {}).get("data", [])
-    expiry_str = filtered.get("expiryDate") or (raw.get("records", {}).get("expiryDates") or [None])[0]
-
-    if not rows or not expiry_str:
-        logger.warning("Option chain missing rows/expiry; falling back to calendar selection.")
-        return None
-
-    try:
-        expiry_d = datetime.strptime(expiry_str, "%d-%b-%Y").date()
-    except Exception as exc:
-        logger.warning("Unable to parse option-chain expiry %r: %s", expiry_str, exc)
-        return None
-
-    atm = int(round(spot_price / strike_step) * strike_step)
-    lower = atm - search_window
-    upper = atm + search_window
-    leg_key = "CE" if direction == "LONG_CALL" else "PE"
-
-    best = None
-    for row in rows:
-        strike = row.get("strikePrice")
-        if strike is None or strike < lower or strike > upper:
-            continue
-        leg = row.get(leg_key)
-        if not leg:
-            continue
-
-        oi = float(leg.get("openInterest") or 0)
-        vol = float(leg.get("totalTradedVolume") or 0)
-        ltp = float(leg.get("lastPrice") or 0)
-        score = oi * 0.7 + vol * 0.3  # liquidity + participation
-
-        if best is None or score > best["score"]:
-            best = {"strike": int(strike), "oi": oi, "vol": vol, "ltp": ltp, "score": score}
-
-    if not best:
-        logger.warning("Option chain scan produced no candidates; falling back to calendar selection.")
-        return None
-
-    opt_type = "CE" if direction == "LONG_CALL" else "PE"
-    symbol = fyers_nifty_option_symbol(
-        underlying="NIFTY",
-        expiry_d=expiry_d,
-        strike=best["strike"],
-        opt_type=opt_type,
-        calendar=calendar,
-        expiry_weekday=1,
-        exchange_prefix="NSE:",
-    )
-
-    notes = (
-        f"OI-based strike={best['strike']} ({leg_key}) oi={best['oi']:.0f} "
-        f"vol={best['vol']:.0f} ltp={best['ltp']:.2f} expiry={expiry_d}"
-    )
-
-    return OptionSelection(
-        direction=direction,
-        setup_type=setup_type,
-        strike_style="ATM",
-        strike=best["strike"],
-        expiry_date=expiry_d,
-        symbol=symbol,
-        notes=notes,
-    )
+    if raw:
+        filtered = raw.get("filtered", {}) or {}
+        expiry_str = (
+            filtered.get("expiryDate")
+            or (raw.get("records", {}).get("expiryDates") or [None])[0]
+        )
+        if expiry_str:
+            try:
+                return datetime.strptime(expiry_str, "%d-%b-%Y").date()
+            except Exception:
+                pass
+    # Calendar fallback
+    return fyers_expiry_for_now(datetime.now(IST), calendar=calendar)
 
 
 def compute_cached_oi_pressure(search_window: float = 200.0):
@@ -457,7 +404,18 @@ def build_order_details_from_signal(
     side: str = "buy",
     qty: int | None = None,
 ):
-    selection_setup = setup_type if setup_type in ("BREAKOUT", "REVERSAL") else "BREAKOUT"
+    with _ENTRY_TRACKER_LOCK:
+        return _build_order_details_locked(fyers_integration, direction, setup_type, spot_price, side, qty)
+
+
+def _build_order_details_locked(
+    fyers_integration,
+    direction: str,
+    setup_type: str,
+    spot_price: float | None = None,
+    side: str = "buy",
+    qty: int | None = None,
+):
     if spot_price is None:
         spot_price = fetch_nifty_spot_price(fyers_integration)
 
@@ -465,95 +423,7 @@ def build_order_details_from_signal(
     now_ist = datetime.now(IST)
     today = now_ist.date()
 
-    def _entry_record_for_today() -> dict | None:
-        rec = ENTRY_TRACKER.get(opt_type)
-        if rec and rec.get("date") == today:
-            return rec
-        return None
-
-    def _record_entry(sel):
-        ENTRY_TRACKER[opt_type] = {
-            "date": today,
-            "strike": sel.strike,
-            "expiry_date": sel.expiry_date,
-            "symbol": sel.symbol,
-            "notes": sel.notes,
-        }
-
-    entry_rec = _entry_record_for_today()
-
-    # Select option if we are not exiting or we have no prior entry cached.
-    selection = None
-    source = "option_chain"
-    if setup_type != "EXIT" or entry_rec is None:
-        selection = select_option_from_chain(
-            spot_price=spot_price,
-            direction=direction,
-            setup_type=selection_setup,
-            calendar=TRADING_CALENDAR,
-        )
-
-        if selection is None:
-            selection = choose_nifty_option_from_signal(
-                spot_price=spot_price,
-                direction=direction,
-                setup_type=selection_setup,
-                calendar=TRADING_CALENDAR,
-            )
-            source = "calendar"
-
-    if setup_type == "EXIT":
-        if entry_rec is None:
-            raise ValueError(f"No tracked entry for {opt_type} today; cannot exit same strike.")
-        # Reuse the exact strike/symbol from the first entry of the day.
-        selection = OptionSelection(
-            direction=direction,
-            setup_type=selection_setup,
-            strike_style="ATM",
-            strike=entry_rec["strike"],
-            expiry_date=entry_rec["expiry_date"],
-            symbol=entry_rec["symbol"],
-            notes=f"exit_using_tracked_entry strike={entry_rec['strike']} expiry={entry_rec['expiry_date']}",
-        )
-        source = "entry_tracker"
-    elif entry_rec is not None:
-        # Adding to same direction/optType -> reuse strike from first entry.
-        selection = OptionSelection(
-            direction=direction,
-            setup_type=selection_setup,
-            strike_style=selection.strike_style if selection else "ATM",
-            strike=entry_rec["strike"],
-            expiry_date=entry_rec["expiry_date"],
-            symbol=entry_rec["symbol"],
-            notes=(selection.notes if selection else "") + f" | reusing_tracked_entry strike={entry_rec['strike']}",
-        )
-        source = "entry_tracker_reuse"
-    else:
-        # Fresh entry: allow time-of-day override and then record it.
-        is_expiry_day = selection.expiry_date == today
-        strike_override = select_strike(
-            spot_price=spot_price,
-            opt_type=opt_type,
-            signal_time=now_ist,
-            is_expiry_day=is_expiry_day,
-            iv_percent=None,
-            momentum_flag=None,
-        )
-        if strike_override != selection.strike:
-            selection.strike = strike_override
-            selection.symbol = fyers_nifty_option_symbol(
-                underlying="NIFTY",
-                expiry_d=selection.expiry_date,
-                strike=strike_override,
-                opt_type=opt_type,
-                calendar=TRADING_CALENDAR,
-                expiry_weekday=1,
-                exchange_prefix="NSE:",
-            )
-            selection.notes += f" | strike_override={strike_override}"
-        _record_entry(selection)
-
-    fyers_side = 1 if str(side).lower() in {"1", "buy", "b"} else -1
+    # ── qty resolution ──────────────────────────────────────────
     if qty is None:
         qty_final = 75
     else:
@@ -564,11 +434,123 @@ def build_order_details_from_signal(
         if qty_final <= 0:
             raise ValueError(f"Quantity must be positive; got {qty_final}")
 
+    fyers_side = 1 if str(side).lower() in {"1", "buy", "b"} else -1
+
+    def _entry_today() -> dict | None:
+        rec = ENTRY_TRACKER.get(opt_type)
+        return rec if (rec and rec.get("date") == today) else None
+
+    def _record_entry(strike, expiry_d, symbol, qty_used):
+        existing = ENTRY_TRACKER.get(opt_type)
+        if existing and existing.get("date") == today:
+            existing["total_qty"] = existing.get("total_qty", 0) + qty_used
+        else:
+            ENTRY_TRACKER[opt_type] = {
+                "date": today,
+                "strike": strike,
+                "expiry_date": expiry_d,
+                "symbol": symbol,
+                "total_qty": qty_used,
+            }
+
+    entry_rec = _entry_today()
+
+    # ── EXIT path ───────────────────────────────────────────────
+    if setup_type == "EXIT":
+        if entry_rec is None:
+            raise ValueError(f"No tracked entry for {opt_type} today; cannot exit same strike.")
+        exit_qty = entry_rec.get("total_qty", qty_final)
+        strike = entry_rec["strike"]
+        symbol = entry_rec["symbol"]
+        note = (
+            f"exit: strike={strike} expiry={entry_rec['expiry_date']} "
+            f"qty={exit_qty} | source=entry_tracker"
+        )
+        order_details = {
+            "symbol": symbol,
+            "qty": exit_qty,
+            "type": 2,
+            "side": -1,  # always sell on exit
+            "productType": "INTRADAY",
+            "limitPrice": 0,
+            "stopPrice": 0,
+            "validity": "DAY",
+            "disclosedQty": 0,
+            "offlineOrder": False,
+            "stopLoss": 0,
+            "takeProfit": 0,
+            "optType": opt_type,
+            "optStrike": str(strike),
+        }
+        record_last_order(note, order_details, mode=setup_type)
+        return order_details, note
+
+    # ── ENTRY / ADD-ON path ─────────────────────────────────────
+    expiry_d = _get_expiry_from_chain(TRADING_CALENDAR)
+    is_expiry_day = (expiry_d == today)
+
+    if entry_rec is not None:
+        # Add-on: reuse same strike, accumulate qty
+        strike = entry_rec["strike"]
+        symbol = entry_rec["symbol"]
+        _record_entry(strike, expiry_d, symbol, qty_final)
+        note = (
+            f"addon: strike={strike} expiry={expiry_d} qty={qty_final} "
+            f"total={entry_rec.get('total_qty', qty_final)} | source=entry_tracker_reuse"
+        )
+    else:
+        # Fresh entry: derive OI confirmation for strike aggressiveness
+        oi_confirms = None
+        oi_skew = "unavailable"
+        try:
+            oi_snap = compute_cached_oi_pressure()
+            if oi_snap:
+                pressure = oi_snap.get("pressure", "")
+                oi_skew = pressure
+                if opt_type == "CE":
+                    if "PE-heavy" in pressure:
+                        oi_confirms = True   # bullish crowd confirms CE buy
+                    elif "CE-heavy" in pressure:
+                        oi_confirms = False  # bearish crowd contradicts CE buy
+                else:  # PE
+                    if "CE-heavy" in pressure:
+                        oi_confirms = True   # bearish crowd confirms PE buy
+                    elif "PE-heavy" in pressure:
+                        oi_confirms = False  # bullish crowd contradicts PE buy
+        except Exception as exc:
+            logger.debug("OI pressure skipped for strike selection: %s", exc)
+
+        # Single-pipeline strike selection
+        strike = select_strike(
+            spot_price=spot_price,
+            opt_type=opt_type,
+            signal_time=now_ist,
+            is_expiry_day=is_expiry_day,
+            setup_type=setup_type,
+            oi_confirms=oi_confirms,
+        )
+        atm = round_to_nearest_strike(spot_price)
+        symbol = fyers_nifty_option_symbol(
+            underlying="NIFTY",
+            expiry_d=expiry_d,
+            strike=strike,
+            opt_type=opt_type,
+            calendar=TRADING_CALENDAR,
+            expiry_weekday=1,
+            exchange_prefix="NSE:",
+        )
+        _record_entry(strike, expiry_d, symbol, qty_final)
+        note = (
+            f"spot={spot_price:.1f} atm={atm} strike={strike} "
+            f"expiry={expiry_d} expiry_day={is_expiry_day} setup={setup_type} "
+            f"oi_skew={oi_skew!r} oi_confirms={oi_confirms}"
+        )
+
     order_details = {
-        "symbol": selection.symbol,
+        "symbol": symbol,
         "qty": qty_final,
-        "type": 2,               # MARKET
-        "side": fyers_side,      # 1 = buy, -1 = sell
+        "type": 2,
+        "side": fyers_side,
         "productType": "INTRADAY",
         "limitPrice": 0,
         "stopPrice": 0,
@@ -578,10 +560,8 @@ def build_order_details_from_signal(
         "stopLoss": 0,
         "takeProfit": 0,
         "optType": opt_type,
-        "optStrike": str(selection.strike),
+        "optStrike": str(strike),
     }
-
-    note = f"{selection.notes} | source={source}"
     record_last_order(note, order_details, mode=setup_type)
     return order_details, note
 
@@ -627,6 +607,60 @@ def get_last_order():
 
 def get_recent_orders():
     return list(LAST_ORDERS)
+
+
+def check_market_open(fyers_integration, max_age_sec: int = 60) -> tuple[bool, str]:
+    """
+    Returns (is_open, status_string) using Fyers market_status().
+    Caches result for max_age_sec seconds. Fails open on API errors so
+    legitimate orders are never blocked by a status check failure.
+    Uses an inflight flag so only one thread makes the API call when cache is stale.
+    """
+    global _MARKET_STATUS_CACHE, _MARKET_STATUS_INFLIGHT
+    now = time.time()
+    with _MARKET_STATUS_LOCK:
+        if _MARKET_STATUS_CACHE["open"] is not None and (now - _MARKET_STATUS_CACHE["ts"]) < max_age_sec:
+            return _MARKET_STATUS_CACHE["open"], _MARKET_STATUS_CACHE["reason"]
+        if _MARKET_STATUS_INFLIGHT:
+            # Another thread is already fetching — serve stale rather than duplicate the call
+            if _MARKET_STATUS_CACHE["open"] is not None:
+                return _MARKET_STATUS_CACHE["open"], _MARKET_STATUS_CACHE["reason"]
+            # No cache yet; fall through and let this thread also fetch
+        else:
+            _MARKET_STATUS_INFLIGHT = True
+
+    try:
+        fyers = fyers_integration.get_fyers_instance()
+        resp = fyers.market_status()
+        if resp.get("s") != "ok":
+            logger.warning("market_status API returned non-ok: %s", resp)
+            with _MARKET_STATUS_LOCK:
+                _MARKET_STATUS_INFLIGHT = False
+            return True, "api_error"
+
+        statuses = resp.get("marketStatus") or []
+        fo_segment = next(
+            (s for s in statuses if s.get("exchange") == "NSE" and "Derivative" in s.get("segment", "")),
+            None,
+        )
+        if fo_segment is None:
+            logger.warning("NSE Equity Derivatives segment not found in market_status response")
+            with _MARKET_STATUS_LOCK:
+                _MARKET_STATUS_INFLIGHT = False
+            return True, "segment_not_found"
+
+        status_str = fo_segment.get("status", "UNKNOWN").upper()
+        is_open = status_str in {"OPEN", "PRE_OPEN"}
+        with _MARKET_STATUS_LOCK:
+            _MARKET_STATUS_CACHE = {"ts": now, "open": is_open, "reason": status_str}
+            _MARKET_STATUS_INFLIGHT = False
+        return is_open, status_str
+
+    except Exception as exc:
+        with _MARKET_STATUS_LOCK:
+            _MARKET_STATUS_INFLIGHT = False
+        logger.warning("market_status check failed: %s", exc)
+        return True, "check_error"
 
 
 def get_option_chain_cache_info():

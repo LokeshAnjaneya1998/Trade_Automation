@@ -13,9 +13,23 @@ class FyersIntegration:
     def __init__(self):
         self.config_manager = ConfigManager()
         self.config = self.config_manager.config
+        self._config_mtime: float = self._get_config_mtime()
+
+    def _get_config_mtime(self) -> float:
+        try:
+            return os.path.getmtime(self.config_manager._path)
+        except Exception:
+            return 0.0
 
     def refresh_config(self) -> None:
-        """Reload config from disk so new tokens are picked up by other instances."""
+        """Reload config from disk only when the file has actually changed (mtime check)."""
+        try:
+            mtime = os.path.getmtime(self.config_manager._path)
+            if mtime <= self._config_mtime:
+                return  # file unchanged — skip disk read
+            self._config_mtime = mtime
+        except Exception:
+            pass  # stat failed — fall through and refresh anyway
         self.config_manager = ConfigManager()
         self.config = self.config_manager.config
         logger.debug("FyersIntegration config refreshed from disk")

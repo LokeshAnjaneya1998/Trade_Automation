@@ -65,7 +65,6 @@ class PremarketAnalyzer:
             nifty_regime=nifty_regime,
             india_vix=india_vix,
             oi_pressure=oi_pressure,
-            global_snapshot=None,
         )
 
     def _summary_to_dict(self, summary: PremarketSummary) -> Dict[str, Any]:
@@ -84,7 +83,6 @@ class PremarketAnalyzer:
                 "gap_type": nr.gap_type,
             },
             "india_vix": summary.india_vix,
-            "global_snapshot": None,
             "oi_pressure": None,
         }
 

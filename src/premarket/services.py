@@ -151,19 +151,53 @@ class FyersMarketDataService:
         df = self._fetch_daily_history(self.vix_symbol, days=2)
         return self._nice(df["Close"].iloc[-1])
 
+    def _fetch_today_range(self) -> float | None:
+        """
+        Today's intraday high-low range using 5-minute candles.
+        Returns None if candles are unavailable (pre-market or API error).
+        """
+        today = dt.datetime.now(IST).date()
+        try:
+            payload = {
+                "symbol": self.nifty_symbol,
+                "resolution": "5",
+                "date_format": "1",
+                "range_from": today.strftime("%Y-%m-%d"),
+                "range_to": today.strftime("%Y-%m-%d"),
+                "cont_flag": "1",
+            }
+            resp = self._call_with_retry(self.fyers.history, payload, "intraday_5m_today")
+            if resp.get("s") != "ok":
+                return None
+            df = self._to_df_from_history(resp)
+            if df.empty:
+                return None
+            return float(df["High"].max() - df["Low"].min())
+        except Exception as exc:
+            logger.debug("Today's intraday range fetch failed: %s", exc)
+            return None
+
     def classify_nifty_regime(self) -> NiftyRegime:
         try:
             df = self._fetch_daily_history(self.nifty_symbol, days=40)
+            now_ist = dt.datetime.now(IST)
+            market_open = dt.time(9, 15)
 
             atr = self._compute_atr(df, period=20)
             atr_20 = float(atr.iloc[-1])
 
-            prev = df.iloc[-1]
-            prev_range = float(prev["High"] - prev["Low"])
+            # #9: Use today's intraday range when market is open; prev-day otherwise
+            if now_ist.time() >= market_open:
+                vol_range = self._fetch_today_range()
+                if vol_range is None:
+                    vol_range = float(df.iloc[-1]["High"] - df.iloc[-1]["Low"])
+                    logger.debug("Intraday range unavailable; falling back to prev-day range")
+            else:
+                vol_range = float(df.iloc[-1]["High"] - df.iloc[-1]["Low"])
 
-            if prev_range > 1.5 * atr_20:
+            if vol_range > 1.5 * atr_20:
                 vol = "High Volatility (range > 1.5x ATR20)"
-            elif prev_range < 0.8 * atr_20:
+            elif vol_range < 0.8 * atr_20:
                 vol = "Low Volatility (range < 0.8x ATR20)"
             else:
                 vol = "Normal Volatility"
@@ -180,25 +214,28 @@ class FyersMarketDataService:
                 trend = "Sideways / Flat EMAs"
 
             last_close = float(close.iloc[-1])
-            try:
-                implied_open = self._fetch_ltp(self.nifty_symbol)
-            except Exception as exc:
-                logger.warning("NIFTY gap calc skipped (quotes error): %s", exc)
-                implied_open = last_close
 
-            gap_points = implied_open - last_close
-            gap_mult = gap_points / atr_20 if atr_20 else 0.0
-
-            if abs(gap_mult) < 0.3:
-                gap_type = "Small gap (<0.3x ATR)"
-            elif abs(gap_mult) < 1.0:
-                gap_type = "Medium gap (0.3-1x ATR)"
+            # #10: Gap analysis only pre-market (before 09:15 IST)
+            if now_ist.time() < market_open:
+                try:
+                    implied_open = self._fetch_ltp(self.nifty_symbol)
+                    gap_points = implied_open - last_close
+                    gap_mult = gap_points / atr_20 if atr_20 else 0.0
+                    if abs(gap_mult) < 0.3:
+                        gap_type = "Small gap (<0.3x ATR)"
+                    elif abs(gap_mult) < 1.0:
+                        gap_type = "Medium gap (0.3-1x ATR)"
+                    else:
+                        gap_type = "Large gap (>1x ATR)"
+                except Exception as exc:
+                    logger.warning("NIFTY gap calc skipped (quotes error): %s", exc)
+                    gap_points, gap_mult, gap_type = 0.0, 0.0, "Gap data unavailable"
             else:
-                gap_type = "Large gap (>1x ATR)"
+                gap_points, gap_mult, gap_type = 0.0, 0.0, "N/A (market open)"
 
             regime = NiftyRegime(
                 atr_20=self._nice(atr_20),
-                day_range_prev=self._nice(prev_range),
+                day_range_prev=self._nice(vol_range),
                 vol_regime=vol,
                 trend_regime=trend,
                 gap_points=self._nice(gap_points),
@@ -207,15 +244,15 @@ class FyersMarketDataService:
             )
             self._last_regime = regime
             logger.info(
-                f"NIFTY regime: atr_20={atr_20:.2f}, prev_range={prev_range:.2f}, "
-                f"vol='{vol}', trend='{trend}', gap_points={gap_points:.2f}, gap_mult={gap_mult:.2f}, gap_type='{gap_type}'"
+                "NIFTY regime: atr_20=%.2f, vol_range=%.2f, vol='%s', trend='%s', "
+                "gap_points=%.2f, gap_mult=%.2f, gap_type='%s'",
+                atr_20, vol_range, vol, trend, gap_points, gap_mult, gap_type,
             )
             return regime
         except Exception as exc:
             logger.warning("NIFTY regime fetch failed: %s", exc)
             if self._last_regime:
                 return self._last_regime
-            # minimal placeholder to keep UI alive
             return NiftyRegime(
                 atr_20=0.0,
                 day_range_prev=0.0,
